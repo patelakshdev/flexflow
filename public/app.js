@@ -14,25 +14,54 @@ const GOAL = {lose_fat:'Lose Fat',build_muscle:'Build Muscle',stay_fit:'Stay Fit
 const GOAL_ICON = {lose_fat:'🔥',build_muscle:'💪',stay_fit:'🧘'};
 const LEVEL_COLOR = {beginner:'ok',intermediate:'warn',advanced:'brand'};
 
+function decodeToken(t) {
+  if (!t || typeof t !== 'string') return null;
+  try {
+    const b64 = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  } catch {
+    try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+  }
+}
+
 /* ─── App State ─── */
 const S = {
-  token: localStorage.getItem('ff_t'),
-  user: JSON.parse(localStorage.getItem('ff_u') || 'null'),
+  token: localStorage.getItem('ff_t') || localStorage.getItem('ff_admin_t'),
+  user: null,
   view: null,
   charts: [],
   rec: null,
   plans: null,
 };
+try {
+  S.user = JSON.parse(localStorage.getItem('ff_u') || localStorage.getItem('ff_admin_u') || 'null');
+} catch { S.user = null; }
+
+if (S.token && !S.user) {
+  const p = decodeToken(S.token);
+  if (p) {
+    S.user = { name: p.name, role: p.role };
+    localStorage.setItem('ff_u', JSON.stringify(S.user));
+    localStorage.setItem('ff_t', S.token);
+  }
+}
+
 const F = {}; // global function namespace
 const act = fn => async (...a) => { try { await fn(...a); } catch(e) { toast(e.message, 'bad'); } };
 
 /* ─── API ─── */
 async function api(p, o = {}) {
-  const r = await fetch('/api' + p, {
-    method: o.method || 'GET',
-    headers: {'Content-Type':'application/json', ...(S.token && {Authorization:'Bearer '+S.token})},
-    body: o.body ? JSON.stringify(o.body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch('/api' + p, {
+      method: o.method || 'GET',
+      headers: {'Content-Type':'application/json', ...(S.token && {Authorization:'Bearer '+S.token})},
+      body: o.body ? JSON.stringify(o.body) : undefined,
+    });
+  } catch (err) {
+    throw new Error('Network error. Please check your internet connection.');
+  }
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && S.token) { F.logout(); throw new Error('Session expired. Please sign in again.'); }
   if (!r.ok) throw new Error(d.error || 'Request failed');
@@ -190,12 +219,20 @@ function start(r) {
   S.token = r.token; S.user = r.user; S.view = null; S.rec = null; S.plans = null;
   localStorage.setItem('ff_t', r.token);
   localStorage.setItem('ff_u', JSON.stringify(r.user));
+  localStorage.setItem('ff_admin_t', r.token);
+  localStorage.setItem('ff_admin_u', JSON.stringify(r.user));
+  if (r.user?.role === 'admin') {
+    window.location.href = '/admin';
+    return;
+  }
   go();
 }
 
 F.logout = () => {
   S.token = S.user = null;
   localStorage.removeItem('ff_t'); localStorage.removeItem('ff_u');
+  localStorage.removeItem('ff_admin_t'); localStorage.removeItem('ff_admin_u');
+  sessionStorage.removeItem('ff_view');
   F.close(); authScreen();
 };
 
@@ -203,12 +240,29 @@ F.go = v => go(v);
 
 async function go(v) {
   if (!S.token) return authScreen();
-  const nav = NAV[S.user.role];
+
+  if (S.user?.role === 'admin') {
+    localStorage.setItem('ff_admin_t', S.token);
+    localStorage.setItem('ff_admin_u', JSON.stringify(S.user));
+    window.location.replace('/admin');
+    return;
+  }
+
+  const role = S.user?.role || 'member';
+  const nav = NAV[role];
   if (!nav) { authScreen(); return; }
-  S.view = nav.some(n => n.id === v) ? v : (nav.some(n => n.id === S.view) ? S.view : nav[0].id);
-  S.charts.forEach(c => c.destroy()); S.charts = [];
+
+  const targetView = v || window.location.hash.slice(1) || sessionStorage.getItem('ff_view');
+  S.view = nav.some(n => n.id === targetView) ? targetView : (nav.some(n => n.id === S.view) ? S.view : nav[0].id);
+  window.location.hash = S.view;
+  sessionStorage.setItem('ff_view', S.view);
+
+  S.charts.forEach(c => { try { c.destroy(); } catch {} }); S.charts = [];
 
   const logo = `<a href="/" class="font-display text-2xl font-extrabold tracking-tight text-white">FLEX<span class="text-brand-light">FLOW</span></a>`;
+  const roleName = S.user?.role === 'trainer' ? 'Trainer Portal' : 'Member Portal';
+  const userName = S.user?.name || 'Member';
+  const userRole = S.user?.role || 'member';
 
   $('#app').innerHTML = `
     <div class="min-h-screen lg:flex">
@@ -216,7 +270,7 @@ async function go(v) {
       <aside class="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col bg-ink text-white sticky top-0 h-screen overflow-y-auto">
         <div class="p-6 pb-2">
           ${logo.replace('text-2xl','text-3xl')}
-          <p class="text-xs text-slate-400 mt-1 uppercase tracking-widest">${S.user.role === 'trainer' ? 'Trainer Portal' : 'Member Portal'}</p>
+          <p class="text-xs text-slate-400 mt-1 uppercase tracking-widest">${roleName}</p>
         </div>
         <nav class="flex-1 px-3 py-4 space-y-0.5">
           ${nav.map(n => `
@@ -227,10 +281,10 @@ async function go(v) {
         </nav>
         <div class="p-4 border-t border-white/10">
           <div class="flex items-center gap-3 mb-3">
-            <div class="w-9 h-9 rounded-full bg-brand flex items-center justify-center font-bold text-white text-sm shrink-0">${esc(S.user.name.charAt(0).toUpperCase())}</div>
+            <div class="w-9 h-9 rounded-full bg-brand flex items-center justify-center font-bold text-white text-sm shrink-0">${esc(userName.charAt(0).toUpperCase())}</div>
             <div class="min-w-0">
-              <p class="font-semibold text-sm truncate">${esc(S.user.name)}</p>
-              <p class="text-xs text-slate-400 capitalize">${S.user.role}</p>
+              <p class="font-semibold text-sm truncate">${esc(userName)}</p>
+              <p class="text-xs text-slate-400 capitalize">${userRole}</p>
             </div>
           </div>
           <button onclick="F.logout()" class="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors w-full rounded-lg px-2 py-1.5 hover:bg-white/8">
@@ -245,7 +299,7 @@ async function go(v) {
         <header class="lg:hidden sticky top-0 z-30 bg-ink text-white px-4 py-3 flex items-center justify-between shadow-md">
           ${logo}
           <div class="flex items-center gap-2">
-            <span class="text-xs text-slate-400 capitalize">${S.user.role}</span>
+            <span class="text-xs text-slate-400 capitalize">${userRole}</span>
             <button onclick="F.logout()" class="p-2 rounded-lg hover:bg-white/10 transition-colors" aria-label="Sign out">→</button>
           </div>
         </header>
@@ -268,7 +322,13 @@ async function go(v) {
       </nav>
     </div>`;
 
-  try { await V[S.view](); } catch(e) {
+  try {
+    if (V[S.view]) {
+      await V[S.view]();
+    } else {
+      await V[nav[0].id]();
+    }
+  } catch(e) {
     console.error(e);
     $('#main').innerHTML = `<div class="flex flex-col items-center justify-center h-64 text-center"><p class="text-4xl mb-3">😕</p><p class="font-semibold">Could not load this page</p><p class="text-sm text-slate-500 mt-1">${esc(e.message)}</p></div>`;
   }
@@ -363,7 +423,10 @@ function loginForm() {
         ${field('Email address', `<input class="${INP}" type="email" name="email" autocomplete="username" placeholder="you@example.com" required>`)}
         ${field('Password', `<input class="${INP}" type="password" name="password" autocomplete="current-password" placeholder="••••••••" required>`)}
         <button class="${BTN} w-full py-3 text-base">Sign in →</button>
-        <p class="text-xs text-center text-slate-400">Forgot password? Contact your gym admin.</p>
+        <div class="flex items-center justify-between text-xs text-slate-400 mt-3 pt-2">
+          <span>Forgot password? Contact gym admin.</span>
+          <a href="/admin" class="font-semibold text-brand hover:underline">Admin Portal →</a>
+        </div>
       </form>
     </div>`;
 }
@@ -498,13 +561,17 @@ const badge = (n, on, label, sub) => `
 
 /* ─── HOME ─── */
 V.home = async () => {
-  const m = await api('/me'), ms = m.membership, dl = ms?.days_left ?? -1;
-  const next = m.streak < 30 ? 30 : (m.streak < 90 ? 90 : 90);
-  const pct = Math.min(100, Math.round(m.streak / next * 100));
-  const has = t => m.badges.some(b => b.type === t);
+  const m = await api('/me'), ms = m?.membership, dl = ms?.days_left ?? -1;
+  const streak = Number(m?.streak || 0);
+  const next = streak < 30 ? 30 : (streak < 90 ? 90 : 90);
+  const pct = Math.min(100, Math.round(streak / next * 100));
+  const badges = Array.isArray(m?.badges) ? m.badges : [];
+  const has = t => badges.some(b => b.type === t);
+  const name = m?.name || S.user?.name || 'Member';
+  const firstName = name.split(' ')[0] || 'Member';
 
   $('#main').innerHTML = `
-    ${pageHead(`Hi, ${esc(m.name.split(' ')[0])} 👋`, m.trainer ? `Your trainer: ${esc(m.trainer)}` : 'No trainer assigned yet')}
+    ${pageHead(`Hi, ${esc(firstName)} 👋`, m?.trainer ? `Your trainer: ${esc(m.trainer)}` : 'No trainer assigned yet')}
     ${membershipBanner(m)}
 
     <div class="grid lg:grid-cols-3 gap-5">
@@ -514,13 +581,13 @@ V.home = async () => {
           <div>
             <p class="text-sm font-medium text-slate-500">Current Streak</p>
             <div class="flex items-end gap-3 mt-1">
-              <span class="num font-display text-[80px] sm:text-[100px] leading-none font-extrabold text-ink">${m.streak}</span>
+              <span class="num font-display text-[80px] sm:text-[100px] leading-none font-extrabold text-ink">${streak}</span>
               <span class="fire text-5xl pb-2">🔥</span>
             </div>
-            <p class="text-slate-500 text-sm mt-1">${m.streak === 1 ? 'day in a row' : 'days in a row'}</p>
+            <p class="text-slate-500 text-sm mt-1">${streak === 1 ? 'day in a row' : 'days in a row'}</p>
           </div>
-          <button id="ci-btn" class="${BTN} py-3 px-5" onclick="F.checkin()" ${m.checkedToday || !ms || dl < 0 ? 'disabled' : ''}>
-            ${m.checkedToday ? '✓ Checked in' : 'Check In'}
+          <button id="ci-btn" class="${BTN} py-3 px-5" onclick="F.checkin()" ${m?.checkedToday || !ms || dl < 0 ? 'disabled' : ''}>
+            ${m?.checkedToday ? '✓ Checked in' : 'Check In'}
           </button>
         </div>
 
@@ -528,7 +595,7 @@ V.home = async () => {
         <div class="mt-6">
           <div class="flex justify-between text-xs font-medium text-slate-500 mb-1.5">
             <span>Next badge: ${next} days</span>
-            <span>${Math.max(0, next - m.streak)} to go</span>
+            <span>${Math.max(0, next - streak)} to go</span>
           </div>
           <div class="h-2.5 rounded-full bg-slate-100 overflow-hidden">
             <div class="h-full rounded-full bg-gradient-to-r from-brand to-purple-500 progress-bar" style="width:${pct}%"></div>
@@ -537,8 +604,8 @@ V.home = async () => {
 
         <!-- Badges -->
         <div class="grid sm:grid-cols-2 gap-3 mt-6">
-          ${badge(30, has('streak30'), '30-Day Streak', `${30 - Math.min(m.streak,30)} days to go`)}
-          ${badge(90, has('streak90'), '90-Day Streak', `${90 - Math.min(m.streak,90)} days to go`)}
+          ${badge(30, has('streak30'), '30-Day Streak', `${30 - Math.min(streak,30)} days to go`)}
+          ${badge(90, has('streak90'), '90-Day Streak', `${90 - Math.min(streak,90)} days to go`)}
         </div>
       </div>
 
@@ -561,7 +628,7 @@ V.home = async () => {
             </div>
             <div class="flex justify-between items-center py-2">
               <dt class="text-slate-500">Payment</dt>
-              <dd>${m.pendingPayment ? pill('Pending','warn') : pill('Paid','ok')}</dd>
+              <dd>${m?.pendingPayment ? pill('Pending','warn') : pill('Paid','ok')}</dd>
             </div>
           </dl>
           <button class="${BTN2} w-full mt-4" onclick="F.go('plan')">Renew / Change Plan</button>
@@ -580,22 +647,22 @@ V.home = async () => {
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
       <div class="${CARD} p-5 text-center">
         <p class="text-2xl mb-1">⚖️</p>
-        <p class="font-display text-2xl font-extrabold num">${m.weight ? m.weight + ' kg' : '—'}</p>
+        <p class="font-display text-2xl font-extrabold num">${m?.weight ? m.weight + ' kg' : '—'}</p>
         <p class="text-xs text-slate-500 mt-0.5">Current weight</p>
       </div>
       <div class="${CARD} p-5 text-center">
-        <p class="text-2xl mb-1">${GOAL_ICON[m.goal]||'🎯'}</p>
-        <p class="font-semibold text-sm">${GOAL[m.goal]||'—'}</p>
+        <p class="text-2xl mb-1">${GOAL_ICON[m?.goal]||'🎯'}</p>
+        <p class="font-semibold text-sm">${GOAL[m?.goal]||'—'}</p>
         <p class="text-xs text-slate-500 mt-0.5">Your goal</p>
       </div>
       <div class="${CARD} p-5 text-center">
         <p class="text-2xl mb-1">🏅</p>
-        <p class="font-display text-2xl font-extrabold num">${m.badges.length}</p>
+        <p class="font-display text-2xl font-extrabold num">${badges.length}</p>
         <p class="text-xs text-slate-500 mt-0.5">Badges earned</p>
       </div>
       <div class="${CARD} p-5 text-center">
         <p class="text-2xl mb-1">📅</p>
-        <p class="font-semibold text-sm">${m.checkedToday ? '✓ Done' : 'Not yet'}</p>
+        <p class="font-semibold text-sm">${m?.checkedToday ? '✓ Done' : 'Not yet'}</p>
         <p class="text-xs text-slate-500 mt-0.5">Today's check-in</p>
       </div>
     </div>`;
@@ -986,4 +1053,17 @@ F.viewP = act(async (id, name) => {
    Bootstrap
    ═══════════════════════════════════════════════════════════════ */
 window.V = V; window.F = F;
-S.token ? go() : authScreen();
+window.addEventListener('hashchange', () => {
+  const h = window.location.hash.slice(1);
+  if (h && S.token && S.user && S.view !== h) go(h);
+});
+
+if (S.token) {
+  if (S.user?.role === 'admin') {
+    window.location.replace('/admin');
+  } else {
+    go();
+  }
+} else {
+  authScreen();
+}

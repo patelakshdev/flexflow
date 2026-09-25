@@ -12,23 +12,54 @@ const fmt = d => d ? new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateStr
 const fmtTime = d => d ? new Date(String(d).replace(' ','T')).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '—';
 const GOAL = {lose_fat:'Lose Fat',build_muscle:'Build Muscle',stay_fit:'Stay Fit'};
 
+function decodeToken(t) {
+  if (!t || typeof t !== 'string') return null;
+  try {
+    const b64 = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  } catch {
+    try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+  }
+}
+
 /* ─── App State ─── */
 const S = {
-  token: localStorage.getItem('ff_admin_t'),
-  user: JSON.parse(localStorage.getItem('ff_admin_u') || 'null'),
+  token: localStorage.getItem('ff_admin_t') || localStorage.getItem('ff_t'),
+  user: null,
   view: null,
   charts: [],
 };
+try {
+  S.user = JSON.parse(localStorage.getItem('ff_admin_u') || localStorage.getItem('ff_u') || 'null');
+} catch { S.user = null; }
+
+if (S.token && !S.user) {
+  const p = decodeToken(S.token);
+  if (p) {
+    S.user = { name: p.name, role: p.role };
+    localStorage.setItem('ff_admin_u', JSON.stringify(S.user));
+    localStorage.setItem('ff_admin_t', S.token);
+    localStorage.setItem('ff_t', S.token);
+    localStorage.setItem('ff_u', JSON.stringify(S.user));
+  }
+}
+
 const F = {};
 const act = fn => async (...a) => { try { await fn(...a); } catch(e) { toast(e.message, 'bad'); } };
 
 /* ─── API ─── */
 async function api(p, o = {}) {
-  const r = await fetch('/api' + p, {
-    method: o.method || 'GET',
-    headers: {'Content-Type':'application/json', ...(S.token && {Authorization:'Bearer '+S.token})},
-    body: o.body ? JSON.stringify(o.body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch('/api' + p, {
+      method: o.method || 'GET',
+      headers: {'Content-Type':'application/json', ...(S.token && {Authorization:'Bearer '+S.token})},
+      body: o.body ? JSON.stringify(o.body) : undefined,
+    });
+  } catch (err) {
+    throw new Error('Network error. Please check your internet connection.');
+  }
   const d = await r.json().catch(() => ({}));
   if (r.status === 401 && S.token) { F.logout(); throw new Error('Session expired.'); }
   if (!r.ok) throw new Error(d.error || 'Request failed');
@@ -175,6 +206,8 @@ function start(r) {
   S.token = r.token; S.user = r.user; S.view = null;
   localStorage.setItem('ff_admin_t', r.token);
   localStorage.setItem('ff_admin_u', JSON.stringify(r.user));
+  localStorage.setItem('ff_t', r.token);
+  localStorage.setItem('ff_u', JSON.stringify(r.user));
   go();
 }
 
@@ -182,6 +215,9 @@ F.logout = () => {
   S.token = S.user = null;
   localStorage.removeItem('ff_admin_t');
   localStorage.removeItem('ff_admin_u');
+  localStorage.removeItem('ff_t');
+  localStorage.removeItem('ff_u');
+  sessionStorage.removeItem('ff_admin_view');
   F.close();
   loginScreen();
 };
@@ -190,11 +226,18 @@ F.go = v => go(v);
 
 async function go(v) {
   if (!S.token) return loginScreen();
+  if (S.user?.role === 'member') {
+    window.location.replace('/');
+    return;
+  }
   if (S.user?.role !== 'admin') {
     toast('Admin access required', 'bad');
     return loginScreen();
   }
-  S.view = NAV.some(n => n.id === v) ? v : (NAV.some(n => n.id === S.view) ? S.view : NAV[0].id);
+  const targetView = v || window.location.hash.slice(1) || sessionStorage.getItem('ff_admin_view');
+  S.view = NAV.some(n => n.id === targetView) ? targetView : (NAV.some(n => n.id === S.view) ? S.view : NAV[0].id);
+  window.location.hash = S.view;
+  sessionStorage.setItem('ff_admin_view', S.view);
   S.charts.forEach(c => { try { c.destroy(); } catch{} }); S.charts = [];
 
   const logo = `<span class="font-display text-2xl font-extrabold tracking-tight text-white">FLEX<span class="text-brand-light">FLOW</span></span>`;
@@ -289,6 +332,15 @@ F.login = act(async e => {
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
     const r = await api('/auth/login', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
+    if (r.user.role === 'member') {
+      localStorage.setItem('ff_t', r.token);
+      localStorage.setItem('ff_u', JSON.stringify(r.user));
+      localStorage.setItem('ff_admin_t', r.token);
+      localStorage.setItem('ff_admin_u', JSON.stringify(r.user));
+      toast('Member account detected. Redirecting to Member Portal...', 'ok');
+      setTimeout(() => { window.location.href = '/'; }, 400);
+      return;
+    }
     if (r.user.role !== 'admin') throw new Error('This portal is for admins only.');
     start(r);
   } finally { btn.disabled = false; btn.textContent = 'Sign in to Admin →'; }
@@ -780,4 +832,17 @@ F.mark = act(async e => {
    Bootstrap
    ═══════════════════════════════════════════════════════════════ */
 window.V = V; window.F = F;
-S.token ? go() : loginScreen();
+window.addEventListener('hashchange', () => {
+  const h = window.location.hash.slice(1);
+  if (h && S.token && S.user?.role === 'admin' && S.view !== h) go(h);
+});
+
+if (S.token) {
+  if (S.user?.role === 'member') {
+    window.location.replace('/');
+  } else {
+    go();
+  }
+} else {
+  loginScreen();
+}

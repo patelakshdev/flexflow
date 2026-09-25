@@ -218,57 +218,83 @@ app.post('/api/auth/register', wrap(async (req, res) => {
 
 /* member */
 app.get('/api/me', auth('member'), wrap(async (req, res) => {
-  const mid = req.user.mid;
+  let mid = req.user.mid;
+  if (!mid) {
+    const [found] = await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]);
+    mid = found?.id;
+  }
+  if (!mid) throw new HttpError(404, 'Member profile not found');
   const [m] = await q(`SELECT u.name,u.email,u.phone,m.goal,m.height_cm,m.diet_pref,m.declared_level,m.joined_on,tu.name trainer
     FROM members m JOIN users u ON u.id=m.user_id LEFT JOIN trainers t ON t.id=m.trainer_id LEFT JOIN users tu ON tu.id=t.user_id WHERE m.id=?`, [mid]);
+  if (!m) throw new HttpError(404, 'Member record not found');
   const [ms] = await q(`SELECT ms.start_date,ms.end_date,p.name plan_name,p.months FROM memberships ms JOIN plans p ON p.id=ms.plan_id
     WHERE ms.member_id=? AND ms.status='active' ORDER BY ms.end_date DESC LIMIT 1`, [mid]);
   const [pp] = await q(`SELECT pay.id,pay.amount,p.name plan_name FROM payments pay JOIN memberships ms ON ms.id=pay.membership_id
     JOIN plans p ON p.id=ms.plan_id WHERE pay.member_id=? AND pay.status='pending' ORDER BY pay.id DESC LIMIT 1`, [mid]);
   const [c] = await q('SELECT COUNT(*) n FROM attendance WHERE member_id=? AND date=CURDATE()', [mid]);
   const [w] = await q('SELECT weight_kg FROM progress WHERE member_id=? ORDER BY date DESC,id DESC LIMIT 1', [mid]);
+  const badges = await q('SELECT type,earned_on FROM badges WHERE member_id=?', [mid]);
   res.json({ ...m, membership: ms ? { ...ms, days_left: daysLeft(ms.end_date) } : null, pendingPayment: pp || null,
-    streak: await streakOf(mid), checkedToday: Number(c?.n || 0) > 0, badges: await q('SELECT type,earned_on FROM badges WHERE member_id=?', [mid]), weight: w?.weight_kg ?? null });
+    streak: await streakOf(mid), checkedToday: Number(c?.n || 0) > 0, badges: badges || [], weight: w?.weight_kg ?? null });
 }));
-app.post('/api/me/checkin', auth('member'), wrap(async (req, res) => res.json(await checkIn(req.user.mid))));
-app.get('/api/me/payments', auth('member'), wrap(async (req, res) => res.json(await q(
-  `SELECT pay.id,pay.amount,pay.method,pay.status,pay.paid_on,pay.created_at,p.name plan_name FROM payments pay
-   JOIN memberships ms ON ms.id=pay.membership_id JOIN plans p ON p.id=ms.plan_id WHERE pay.member_id=? ORDER BY pay.id DESC`, [req.user.mid]))));
+app.post('/api/me/checkin', auth('member'), wrap(async (req, res) => {
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
+  res.json(await checkIn(mid));
+}));
+app.get('/api/me/payments', auth('member'), wrap(async (req, res) => {
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
+  res.json(await q(
+    `SELECT pay.id,pay.amount,pay.method,pay.status,pay.paid_on,pay.created_at,p.name plan_name FROM payments pay
+     JOIN memberships ms ON ms.id=pay.membership_id JOIN plans p ON p.id=ms.plan_id WHERE pay.member_id=? ORDER BY pay.id DESC`, [mid]));
+}));
 // NOTE: payment is simulated. In production, create a gateway order here and call settle() from the gateway's verified webhook.
 app.post('/api/me/renew', auth('member'), wrap(async (req, res) => {
   okMethod(req.body?.method);
-  await settle(await newPending(req.user.mid, req.body.plan_id), req.body.method);
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
+  await settle(await newPending(mid, req.body.plan_id), req.body.method);
   res.json({ ok: true });
 }));
 app.post('/api/me/pay', auth('member'), wrap(async (req, res) => {
   okMethod(req.body?.method);
-  const [p] = await q('SELECT id FROM payments WHERE id=? AND member_id=?', [req.body.payment_id, req.user.mid]);
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
+  const [p] = await q('SELECT id FROM payments WHERE id=? AND member_id=?', [req.body.payment_id, mid]);
   if (!p) throw new HttpError(404, 'Payment not found');
   await settle(p.id, req.body.method);
   res.json({ ok: true });
 }));
-app.get('/api/me/progress', auth('member'), wrap(async (req, res) =>
-  res.json(await q('SELECT date,weight_kg,note FROM progress WHERE member_id=? ORDER BY date', [req.user.mid]))));
+app.get('/api/me/progress', auth('member'), wrap(async (req, res) => {
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
+  res.json(await q('SELECT date,weight_kg,note FROM progress WHERE member_id=? ORDER BY date', [mid]));
+}));
 app.post('/api/me/progress', auth('member'), wrap(async (req, res) => {
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
   const w = Number(req.body?.weight_kg);
   if (!(w >= 25 && w <= 300)) throw new HttpError(400, 'Enter a weight between 25 and 300 kg');
   await q('INSERT INTO progress(member_id,date,weight_kg,note) VALUES(?,CURDATE(),?,?) ON DUPLICATE KEY UPDATE weight_kg=VALUES(weight_kg),note=VALUES(note)',
-    [req.user.mid, w, String(req.body.note || '').slice(0, 200) || null]);
+    [mid, w, String(req.body.note || '').slice(0, 200) || null]);
   res.json({ ok: true });
 }));
 app.get('/api/me/recommend', auth('member'), wrap(async (req, res) => {
-  const mid = req.user.mid;
+  const mid = req.user.mid || (await q('SELECT id FROM members WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!mid) throw new HttpError(404, 'Member profile not found');
   const [m] = await q('SELECT * FROM members WHERE id=?', [mid]);
+  if (!m) throw new HttpError(404, 'Member details not found');
   const [a] = await q('SELECT COUNT(*) n FROM attendance WHERE member_id=? AND date>=DATE_SUB(CURDATE(),INTERVAL 30 DAY)', [mid]);
   const w = await q('SELECT weight_kg FROM progress WHERE member_id=? ORDER BY date,id', [mid]);
   const streak = await streakOf(mid);
   const tenure = Math.max(0, Math.round((local(ymd(new Date())) - local(m.joined_on)) / 864e5));
-  const assessment = assess(m, streak, a.n, tenure);
+  const assessment = assess(m, streak, a?.n || 0, tenure);
   const kg = Number(w.at(-1)?.weight_kg || 70);
   const trend = w.length > 1 ? +(kg - w[0].weight_kg).toFixed(1) : 0;
   const bmi = m.height_cm ? +(kg / ((m.height_cm / 100) ** 2)).toFixed(1) : null;
   const days = WORKOUTS[assessment.level].map(d => ({ ...d, ex: [...d.ex, FINISHER[m.goal]] }));
-  const coach = await coachNote({ level: assessment.level, score: assessment.score, goal: m.goal, streak, sessions_last_30_days: a.n, bmi, weight_change_kg: trend, diet: m.diet_pref }, mid);
+  const coach = await coachNote({ level: assessment.level, score: assessment.score, goal: m.goal, streak, sessions_last_30_days: a?.n || 0, bmi, weight_change_kg: trend, diet: m.diet_pref }, mid);
   res.json({ assessment, goal: m.goal, workout: { days }, diet: dietFor(m, kg, assessment.level), coach, ai: !!coach, weight: kg, bmi, trend });
 }));
 
@@ -371,14 +397,20 @@ app.post('/api/admin/attendance', admin, wrap(async (req, res) => res.json(await
 
 /* trainer */
 const trainer = auth('trainer');
-app.get('/api/trainer/members', trainer, wrap(async (req, res) => res.json(await q(
-  `SELECT m.id,u.name,m.goal,m.declared_level,
-   (SELECT MAX(end_date) FROM memberships WHERE member_id=m.id AND status='active') end_date,
-   (SELECT COUNT(*) FROM attendance WHERE member_id=m.id AND date>=DATE_SUB(CURDATE(),INTERVAL 30 DAY)) att30,
-   (SELECT weight_kg FROM progress WHERE member_id=m.id ORDER BY date DESC,id DESC LIMIT 1) weight
-   FROM members m JOIN users u ON u.id=m.user_id WHERE m.trainer_id=? ORDER BY u.name`, [req.user.tid]))));
+app.get('/api/trainer/members', trainer, wrap(async (req, res) => {
+  const tid = req.user.tid || (await q('SELECT id FROM trainers WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!tid) return res.json([]);
+  res.json(await q(
+    `SELECT m.id,u.name,m.goal,m.declared_level,
+     (SELECT MAX(end_date) FROM memberships WHERE member_id=m.id AND status='active') end_date,
+     (SELECT COUNT(*) FROM attendance WHERE member_id=m.id AND date>=DATE_SUB(CURDATE(),INTERVAL 30 DAY)) att30,
+     (SELECT weight_kg FROM progress WHERE member_id=m.id ORDER BY date DESC,id DESC LIMIT 1) weight
+     FROM members m JOIN users u ON u.id=m.user_id WHERE m.trainer_id=? ORDER BY u.name`, [tid]));
+}));
 app.get('/api/trainer/members/:id/progress', trainer, wrap(async (req, res) => {
-  const [ok] = await q('SELECT id FROM members WHERE id=? AND trainer_id=?', [req.params.id, req.user.tid]);
+  const tid = req.user.tid || (await q('SELECT id FROM trainers WHERE user_id=?', [req.user.uid]))[0]?.id;
+  if (!tid) throw new HttpError(404, 'Trainer profile not found');
+  const [ok] = await q('SELECT id FROM members WHERE id=? AND trainer_id=?', [req.params.id, tid]);
   if (!ok) throw new HttpError(404, 'Member not found');
   res.json(await q('SELECT date,weight_kg,note FROM progress WHERE member_id=? ORDER BY date', [req.params.id]));
 }));

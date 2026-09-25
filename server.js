@@ -3,136 +3,14 @@ const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { pool, isPg, q, getConnection, ensureDbInit } = require('./db');
 
 const SECRET = process.env.JWT_SECRET || 'flexflow-super-secret-jwt-key-24-characters-production';
 
-const poolConfig = process.env.DATABASE_URL || process.env.MYSQL_URL || {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'flexflow',
-  port: Number(process.env.DB_PORT) || 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  dateStrings: true,
-  ssl: (process.env.DB_SSL === 'true' || process.env.DB_SSL === '1') ? { rejectUnauthorized: false } : undefined,
-};
-
-const pool = mysql.createPool(poolConfig);
-
-let isInitialized = false;
-async function ensureDbInit() {
-  if (isInitialized) return;
-  try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS users (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
-      email VARCHAR(150) NOT NULL UNIQUE,
-      phone VARCHAR(20),
-      password_hash VARCHAR(100) NOT NULL,
-      role ENUM('member','trainer','admin') NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS trainers (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT NOT NULL UNIQUE,
-      specialization VARCHAR(100),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS members (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT NOT NULL UNIQUE,
-      trainer_id INT NULL,
-      goal ENUM('lose_fat','build_muscle','stay_fit') DEFAULT 'stay_fit',
-      declared_level ENUM('beginner','intermediate','advanced') DEFAULT 'beginner',
-      diet_pref ENUM('veg','nonveg') DEFAULT 'veg',
-      height_cm SMALLINT,
-      joined_on DATE NOT NULL DEFAULT (CURDATE()),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (trainer_id) REFERENCES trainers(id) ON DELETE SET NULL
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS plans (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(30) NOT NULL,
-      months TINYINT NOT NULL,
-      price INT NOT NULL
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS memberships (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      member_id INT NOT NULL,
-      plan_id INT NOT NULL,
-      start_date DATE NULL,
-      end_date DATE NULL,
-      status ENUM('pending','active') NOT NULL DEFAULT 'pending',
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
-      FOREIGN KEY (plan_id) REFERENCES plans(id),
-      INDEX (member_id, status, end_date)
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS payments (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      member_id INT NOT NULL,
-      membership_id INT NOT NULL,
-      amount INT NOT NULL,
-      method ENUM('upi','card','netbanking','cash') NULL,
-      status ENUM('pending','paid') NOT NULL DEFAULT 'pending',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      paid_on DATETIME NULL,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
-      FOREIGN KEY (membership_id) REFERENCES memberships(id) ON DELETE CASCADE,
-      INDEX (status, paid_on)
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS attendance (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      member_id INT NOT NULL,
-      date DATE NOT NULL,
-      checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY one_per_day (member_id, date),
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS progress (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      member_id INT NOT NULL,
-      date DATE NOT NULL,
-      weight_kg DECIMAL(5,1) NOT NULL,
-      note VARCHAR(200),
-      UNIQUE KEY one_per_day (member_id, date),
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS badges (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      member_id INT NOT NULL,
-      type ENUM('streak30','streak90') NOT NULL,
-      earned_on DATE NOT NULL,
-      UNIQUE KEY one_each (member_id, type),
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
-    )`);
-
-    const [pRows] = await pool.query('SELECT COUNT(*) c FROM plans');
-    if (!pRows[0]?.c) {
-      await pool.query(`INSERT IGNORE INTO plans (name, months, price) VALUES
-        ('1 Month',1,1500),('3 Months',3,4000),('6 Months',6,7000),('12 Months',12,12000)`);
-    }
-
-    const [aRows] = await pool.query('SELECT id FROM users WHERE role="admin" LIMIT 1');
-    if (!aRows.length) {
-      const e = (process.env.ADMIN_EMAIL || 'admin@flexflow.com').toLowerCase().trim();
-      const p = process.env.ADMIN_PASSWORD || 'Admin@123456';
-      const hash = await bcrypt.hash(p, 10);
-      await pool.query('INSERT INTO users(name,email,password_hash,role) VALUES("Admin",?,?,"admin")', [e, hash]);
-      console.log('Created admin user:', e);
-    }
-    isInitialized = true;
-  } catch (err) {
-    console.error('Database init check notice:', err.message);
-  }
-}
-
 /* ---------- helpers ---------- */
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
-const q = (sql, p = []) => pool.query(sql, p).then(([r]) => r);
 const wrap = fn => (req, res) => fn(req, res).catch(e => {
   if (e.status) return res.status(e.status).json({ error: e.message });
   console.error(e); res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -166,7 +44,7 @@ async function createMember(d) {
     throw new HttpError(400, 'Enter your name, a valid email and a password of at least 8 characters');
   const [plan] = await q('SELECT * FROM plans WHERE id=?', [d.plan_id]);
   if (!plan) throw new HttpError(400, 'Choose a membership plan');
-  const c = await pool.getConnection();
+  const c = await getConnection();
   try {
     await c.beginTransaction();
     const hash = await bcrypt.hash(d.password, 10);
@@ -181,7 +59,7 @@ async function createMember(d) {
     return { user_id: u.insertId, member_id: m.insertId };
   } catch (e) {
     await c.rollback();
-    if (e.code === 'ER_DUP_ENTRY') throw new HttpError(409, 'That email is already registered');
+    if (e.code === 'ER_DUP_ENTRY' || e.code === '23505') throw new HttpError(409, 'That email is already registered');
     throw e;
   } finally { c.release(); }
 }
@@ -208,7 +86,7 @@ async function newPending(memberId, planId) {
 
 async function streakOf(mid) {
   const rows = await q('SELECT date FROM attendance WHERE member_id=? ORDER BY date DESC LIMIT 400', [mid]);
-  const days = new Set(rows.map(r => r.date));
+  const days = new Set(rows.map(r => (typeof r.date === 'string' ? r.date.slice(0, 10) : ymd(new Date(r.date)))));
   const cur = local(ymd(new Date()));
   if (!days.has(ymd(cur))) cur.setDate(cur.getDate() - 1); // today not yet checked in: streak is still alive
   let s = 0;
@@ -350,7 +228,7 @@ app.get('/api/me', auth('member'), wrap(async (req, res) => {
   const [c] = await q('SELECT COUNT(*) n FROM attendance WHERE member_id=? AND date=CURDATE()', [mid]);
   const [w] = await q('SELECT weight_kg FROM progress WHERE member_id=? ORDER BY date DESC,id DESC LIMIT 1', [mid]);
   res.json({ ...m, membership: ms ? { ...ms, days_left: daysLeft(ms.end_date) } : null, pendingPayment: pp || null,
-    streak: await streakOf(mid), checkedToday: c.n > 0, badges: await q('SELECT type,earned_on FROM badges WHERE member_id=?', [mid]), weight: w?.weight_kg ?? null });
+    streak: await streakOf(mid), checkedToday: Number(c?.n || 0) > 0, badges: await q('SELECT type,earned_on FROM badges WHERE member_id=?', [mid]), weight: w?.weight_kg ?? null });
 }));
 app.post('/api/me/checkin', auth('member'), wrap(async (req, res) => res.json(await checkIn(req.user.mid))));
 app.get('/api/me/payments', auth('member'), wrap(async (req, res) => res.json(await q(
@@ -410,9 +288,23 @@ app.get('/api/admin/dashboard', admin, wrap(async (req, res) => {
   const revenue = [], attendance = [];
   for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); const key = ymd(d).slice(0, 7);
     revenue.push({ label: d.toLocaleString('en-IN', { month: 'short' }), value: Number(rev.find(r => r.m === key)?.t || 0) }); }
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); const key = ymd(d);
-    attendance.push({ label: d.toLocaleString('en-IN', { weekday: 'short' }), value: att.find(r => r.d === key)?.c || 0 }); }
-  res.json({ kpi: k, revenue, attendance,
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i); const key = ymd(d);
+    const item = att.find(r => (typeof r.d === 'string' ? r.d.slice(0, 10) : ymd(new Date(r.d))) === key);
+    attendance.push({ label: d.toLocaleString('en-IN', { weekday: 'short' }), value: Number(item?.c || 0) });
+  }
+
+  const kpiData = {
+    members: Number(k?.members || 0),
+    active: Number(k?.active || 0),
+    expiring: Number(k?.expiring || 0),
+    today: Number(k?.today || 0),
+    revMonth: Number(k?.revMonth ?? k?.revmonth ?? 0),
+    revTotal: Number(k?.revTotal ?? k?.revtotal ?? 0),
+    pending: Number(k?.pending || 0),
+  };
+
+  res.json({ kpi: kpiData, revenue, attendance,
     plans: await q(`SELECT p.name,COUNT(*) c FROM memberships ms JOIN plans p ON p.id=ms.plan_id WHERE ms.status='active' AND ms.end_date>=CURDATE() GROUP BY p.id,p.name ORDER BY p.months`),
     expiring: await q(`SELECT m.id,u.name,u.phone,MAX(ms.end_date) end_date FROM memberships ms JOIN members m ON m.id=ms.member_id JOIN users u ON u.id=m.user_id
       WHERE ms.status='active' GROUP BY m.id,u.name,u.phone HAVING MAX(ms.end_date) BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 7 DAY) ORDER BY end_date`) });
@@ -444,14 +336,14 @@ app.get('/api/admin/trainers', admin, wrap(async (req, res) => res.json(await q(
 app.post('/api/admin/trainers', admin, wrap(async (req, res) => {
   const d = req.body || {};
   if (!d.name || !validEmail(d.email) || (d.password || '').length < 8) throw new HttpError(400, 'Enter a name, a valid email and a password of at least 8 characters');
-  const c = await pool.getConnection();
+  const c = await getConnection();
   try {
     await c.beginTransaction();
     const [u] = await c.query('INSERT INTO users(name,email,phone,password_hash,role) VALUES(?,?,?,?,"trainer")',
       [d.name.trim(), d.email.toLowerCase().trim(), d.phone || null, await bcrypt.hash(d.password, 10)]);
     await c.query('INSERT INTO trainers(user_id,specialization) VALUES(?,?)', [u.insertId, d.specialization || null]);
     await c.commit(); res.status(201).json({ ok: true });
-  } catch (e) { await c.rollback(); if (e.code === 'ER_DUP_ENTRY') throw new HttpError(409, 'That email is already registered'); throw e; }
+  } catch (e) { await c.rollback(); if (e.code === 'ER_DUP_ENTRY' || e.code === '23505') throw new HttpError(409, 'That email is already registered'); throw e; }
   finally { c.release(); }
 }));
 app.delete('/api/admin/trainers/:id', admin, wrap(async (req, res) => {

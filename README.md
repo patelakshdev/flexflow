@@ -1,102 +1,130 @@
 # 🏋️ FlexFlow — Premium Gym Management System
 
-A production-ready, full-stack gym management system with 3 separate portals for **Members**, **Trainers**, and **Admins**.
+A production-ready, full-stack gym management system with 3 separate portals for **Members**, **Trainers**, and **Admins**. Supports both **PostgreSQL** (Render, Neon, Supabase) and **MySQL/MariaDB**, optimized for instant **Vercel** serverless deployment.
 
 ---
 
 ## ✨ Features
 
 ### 👤 Member Portal (`/`)
-- **Registration** with plan selection (1, 3, 6, 12 months)
-- **Dashboard** — streak, check-in, badges, membership status
-- **Plan & Fees** — view/change plan, payment history
-- **AI Workout Recommend** — analyzes attendance, streak & declared level → beginner/intermediate/advanced
-- **Diet Suggestion** — macro calculator with Indian meal plans (veg/non-veg)
-- **Progress Tracking** — weight log with chart
-- **Membership Expire Reminder** banners
-- **30-day & 90-day streak badges** 🏅
+- **Registration & Sign-in** with plan selection (1, 3, 6, 12 months)
+- **Dashboard** — Current streak, daily check-in, badges, active membership banner
+- **Plan & Fees** — View active plan, renew memberships, payment history with receipts
+- **AI Workout Recommendations** — Analyzes attendance, streak & level → Beginner / Intermediate / Advanced
+- **Diet Suggestion** — Dynamic macro calculator with Indian meal plans (veg / non-veg)
+- **Progress Tracking** — Weight log with interactive Chart.js graphs
+- **Expiry Reminder** — Visual alerts 7 days before expiry
+- **Badges System** — 30-day and 90-day streak achievements 🏅
 
-### 🏋️ Trainer Portal (`/` — same URL, role-based)
-- **My Members** — list, goal, sessions/30 days, weight
-- **Progress View** — weight chart per member
+### 🏋️ Trainer Portal (`/` — role-based access)
+- **My Members** — List of assigned clients, fitness goals, attendance stats
+- **Progress View** — Weight trend chart for each client
 
 ### 🔐 Admin Portal (`/admin`)
-- **Dashboard** — Revenue, active members, today's check-ins, expiring soon
-- **Members** — Add, delete, assign trainer, search/filter
-- **Trainers** — Add, delete
-- **Payments** — Record, settle pending dues
-- **Membership Management** — Plan overview, active/expired lists
-- **Attendance** — Daily log, manual check-in
+- **Dashboard** — Real-time revenue, active members, daily check-ins, expiring memberships
+- **Member Management** — Add new members, assign trainers, delete accounts
+- **Trainer Management** — Add trainers, assign specializations
+- **Payments & Billing** — Record offline/manual payments, settle pending dues
+- **Attendance Tracking** — View daily attendance logs, manual check-in
 
 ---
 
-## 🚀 Quick Start
+## ☁️ Deployment Guide
 
-### 1. Prerequisites
-- **Node.js** v18+ 
-- **MySQL / MariaDB** (XAMPP recommended on Windows)
-- **XAMPP** (for MySQL on Windows)
+### Option A: Render PostgreSQL + Vercel (Recommended)
 
-### 2. Install Dependencies
+#### Step 1: Deploy PostgreSQL Database on Render
+1. Go to [Render Dashboard](https://dashboard.render.com/) and click **New +** > **PostgreSQL**.
+2. Set the details:
+   - **Name**: `flexflow-db`
+   - **Database**: `flexflow`
+   - **User**: `flexflow_user`
+   - **Region**: Choose the closest region (e.g. Oregon, Frankfurt, Singapore)
+   - **Plan**: **Free**
+3. Click **Create Database**.
+4. Once created, scroll down to the **Connections** section and copy the **External Database URL**:
+   ```
+   postgresql://flexflow_user:PASSWORD@dpg-xxxxx.render.com/flexflow
+   ```
+   *(Note: Schema, tables, and default plans will be initialized automatically on the first serverless request! You can also optionally run `database/schema.postgres.sql` in Render's "Connect" > "PSQL Command")*
+
+---
+
+#### Step 2: Deploy Web App on Vercel
+1. Push your latest code to GitHub:
+   ```bash
+   git add .
+   git commit -m "feat: postgresql support and vercel config"
+   git push origin main
+   ```
+2. Go to [Vercel Dashboard](https://vercel.com/) and click **Add New...** > **Project**.
+3. Import your GitHub repository (`flexflow`).
+4. In the **Environment Variables** section, add:
+   | Key | Value | Description |
+   |-----|-------|-------------|
+   | `DATABASE_URL` | `postgresql://...` | Render External Database URL |
+   | `JWT_SECRET` | `your-secure-random-string-min-24-chars` | Auth secret key |
+   | `ADMIN_EMAIL` | `admin@flexflow.com` | First admin email |
+   | `ADMIN_PASSWORD` | `Admin@123456` | First admin password |
+   | `ANTHROPIC_API_KEY` | *(Optional)* | For AI coach recommendations |
+5. Click **Deploy**.
+6. When the deployment completes, visit your Vercel URL:
+   - **Member & Trainer Portal**: `https://your-app.vercel.app/`
+   - **Admin Portal**: `https://your-app.vercel.app/admin`
+
+---
+
+### Option B: Deploy Everything on Render (Web Service + DB Blueprint)
+
+1. Fork or push this repository to GitHub.
+2. Go to [Render Dashboard](https://dashboard.render.com/) and click **New +** > **Blueprint**.
+3. Connect your repository. Render will automatically read `render.yaml`, provision the Free PostgreSQL database, and build the Node.js web service with all environment variables pre-configured.
+
+---
+
+## 💻 Local Development
+
+### Prerequisites
+- Node.js v18+
+- PostgreSQL or MySQL (XAMPP on Windows)
+
+### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 3. Configure Environment
-Copy `.env.example` to `.env` and update values:
+### 2. Configure Environment
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` for your local database:
 ```env
 PORT=3000
-DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=
-DB_NAME=flexflow
-JWT_SECRET=your-super-secret-jwt-key-min-24-chars
+# For PostgreSQL:
+DATABASE_URL=postgresql://postgres:password@localhost:5432/flexflow
+
+# OR for MySQL:
+# DB_HOST=localhost
+# DB_USER=root
+# DB_PASSWORD=
+# DB_NAME=flexflow
+
+JWT_SECRET=super-secret-jwt-key-min-24-characters
 ADMIN_EMAIL=admin@flexflow.com
-ADMIN_PASSWORD=YourAdminPassword123
-# Optional AI coach notes:
-ANTHROPIC_API_KEY=
+ADMIN_PASSWORD=Admin@123456
 ```
 
-### 4. Start MySQL (XAMPP on Windows)
-Open XAMPP Control Panel and start **MySQL**, OR run:
-```powershell
-Start-Job { & "C:\xampp\mysql\bin\mysqld.exe" --defaults-file="C:\xampp\mysql\bin\my.ini" --standalone }
-```
-
-### 5. Create Database & Run Schema
-```powershell
-# In PowerShell with XAMPP MySQL in PATH
-$env:PATH += ";C:\xampp\mysql\bin"
-mysql -u root -e "CREATE DATABASE IF NOT EXISTS flexflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-Get-Content "database\schema.sql" -Raw | mysql -u root flexflow
-```
-
-Or via phpMyAdmin:
-1. Open http://localhost/phpmyadmin
-2. Create database `flexflow`
-3. Import `database/schema.sql`
-
-### 6. Start the Server
+### 3. Start the Server
 ```bash
-npm start
-# or for development with auto-reload:
+# Auto-reloads on file changes:
 npm run dev
+
+# Or standard start:
+npm start
 ```
 
-### 7. Open the App
-| Portal | URL |
-|--------|-----|
-| Member / Trainer | http://localhost:3000 |
-| Admin | http://localhost:3000/admin |
-
-**Default admin credentials:**
-- Email: `admin@flexflow.com`  
-- Password: `Admin@123456` (change after first login!)
+Open [http://localhost:3000](http://localhost:3000) for the member app, or [http://localhost:3000/admin](http://localhost:3000/admin) for admin login.
 
 ---
 
@@ -104,13 +132,13 @@ npm run dev
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | HTML5, Tailwind CSS (CDN), Vanilla JS |
-| Charts | Chart.js 4.x |
-| Backend | Node.js + Express |
-| Database | MySQL / MariaDB |
-| Auth | JWT (jsonwebtoken) + bcryptjs |
-| Security | Helmet, express-rate-limit |
-| AI (optional) | Claude API (Anthropic) |
+| Frontend | HTML5, Tailwind CSS, Vanilla JS, Chart.js 4.x |
+| Backend | Node.js, Express.js |
+| Database | PostgreSQL (Render / Neon / Supabase) & MySQL 8.0+ |
+| DB Drivers | `pg` (node-postgres), `mysql2` |
+| Auth & Security | JWT, bcryptjs, Helmet, express-rate-limit |
+| Cloud Hosting | Vercel (Serverless Functions) / Render |
+| AI Integration | Anthropic Claude API (optional) |
 
 ---
 
@@ -118,78 +146,32 @@ npm run dev
 
 ```
 flexflow/
-├── public/
-│   ├── index.html      # Member + Trainer portal
-│   ├── app.js          # Member + Trainer frontend JS
-│   ├── admin.html      # Admin portal
-│   └── admin.js        # Admin frontend JS
+├── api/
+│   └── index.js             # Vercel serverless entrypoint
 ├── database/
-│   └── schema.sql      # MySQL schema + seed data
-├── server.js           # Express API server
+│   ├── schema.postgres.sql  # PostgreSQL schema (Render / Supabase / Neon)
+│   └── schema.sql           # MySQL schema
+├── public/
+│   ├── index.html           # Member + Trainer SPA root
+│   ├── app.js               # Member + Trainer client application
+│   ├── admin.html           # Admin portal SPA root
+│   └── admin.js             # Admin client application
+├── db.js                    # Universal DB adapter (PostgreSQL + MySQL)
+├── server.js                # Express API application & endpoints
+├── render.yaml              # Render blueprint deployment spec
+├── vercel.json              # Vercel build & route rules
 ├── package.json
-├── .env                # Environment config (not committed)
-└── .env.example        # Template
+├── .env.example
+└── README.md
 ```
 
 ---
 
-## 🤖 AI Features
+## 📄 Default Credentials
 
-The **Workout Recommend** system uses a built-in scoring engine:
-
-| Factor | Weight |
-|--------|--------|
-| Sessions in last 30 days | 40 pts |
-| Time training (tenure) | 25 pts |
-| Current streak | 15 pts |
-| Self-reported level | 20 pts |
-
-**Score mapping:** 0–29 → Beginner | 30–64 → Intermediate | 65+ → Advanced
-
-**Optional Claude API:** If `ANTHROPIC_API_KEY` is set, a personalized coach note is generated daily per member (stats only — no PII sent).
-
----
-
-## 🔒 Security Notes
-
-- JWT tokens expire in 7 days
-- Passwords hashed with bcrypt (10 rounds)
-- Rate limiting on auth endpoints (40 req/15min)
-- Helmet CSP headers
-- SQL injection protection via parameterized queries
-- Role-based access control (member/trainer/admin)
-
----
-
-## 📱 Responsive Design
-
-- **Desktop** — Sidebar navigation layout
-- **Mobile** — Bottom tab navigation, sheet modals
-- **PWA-ready** — Theme color, viewport-fit=cover, safe area insets
-
----
-
-## 🏅 Streak & Badges
-
-| Badge | Requirement |
-|-------|-------------|
-| 🥇 30-Day Streak | 30 consecutive daily check-ins |
-| 🏆 90-Day Streak | 90 consecutive daily check-ins |
-
-Badges are automatically awarded on check-in. Once earned, they are permanent.
-
----
-
-## 💳 Membership Plans
-
-| Plan | Duration | Price |
-|------|----------|-------|
-| 1 Month | 1 month | ₹1,500 |
-| 3 Months | 3 months | ₹4,000 |
-| 6 Months | 6 months | ₹7,000 |
-| 12 Months | 12 months | ₹12,000 |
-
-Renewals stack after the current end date.
+- **Admin Portal**: `/admin`
+- **Email**: `admin@flexflow.com`
+- **Password**: `Admin@123456`
 
 ---
 

@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FlexFlow — Demo</title>
+<meta name="theme-color" content="#0F1B33">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  colors: { ink:'#0F1B33', chalk:'#EEF1F5', brand:{DEFAULT:'#2D5BFF',dark:'#1E43D6',soft:'#E8EEFF'}, gold:'#F5A524', ok:'#12A594', bad:'#E5484D' },
+  fontFamily: { display:['"Barlow Condensed"','sans-serif'], sans:['"DM Sans"','system-ui','sans-serif'] }
+} } };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  body { background:#EEF1F5; color:#0F1B33; -webkit-font-smoothing:antialiased;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+  :focus-visible { outline:2px solid #2D5BFF; outline-offset:2px; }
+  .medal { background: conic-gradient(from 200deg,#F5A524,#FFD98A,#F5A524,#C97F0A,#F5A524); }
+  .medal.off { background:#D5DBE5; }
+  .streak-num { font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  @media (prefers-reduced-motion:no-preference){ .pop{animation:pop .35s ease-out} }
+  @keyframes pop { from{transform:scale(.96);opacity:0} to{transform:none;opacity:1} }
+  nav.bottom { padding-bottom:env(safe-area-inset-bottom,0px); }
+  .demo-tag { position:fixed; top:env(safe-area-inset-top,0px); left:0; right:0; z-index:70; }
+</style>
+</head>
+<body>
+  <div class="demo-tag bg-gold text-ink text-[11px] font-bold text-center py-1 tracking-wide">DEMO — sample data only, nothing is saved</div>
+  <div id="app" class="pt-6"></div>
+  <div id="modal"></div>
+  <div id="toast" class="fixed top-12 inset-x-4 z-[60] flex flex-col items-center gap-2 pointer-events-none" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+/* ============ MOCK DATA (no backend, nothing persists on reload) ============ */
+const PLANS = [
+  { id:1, name:'1 Month', months:1, price:1500 },
+  { id:2, name:'3 Months', months:3, price:4000 },
+  { id:3, name:'6 Months', months:6, price:7000 },
+  { id:4, name:'12 Months', months:12, price:12000 },
+];
+const GOAL = { lose_fat:'Lose fat', build_muscle:'Build muscle', stay_fit:'Stay fit' };
+const today = new Date();
+const iso = d => d.toISOString().slice(0,10);
+const daysFromToday = n => { const d=new Date(today); d.setDate(d.getDate()+n); return iso(d); };
+
+const MEMBER = {
+  name:'Aisha Khan', role:'member', trainer:'Rahul Verma',
+  membership:{ plan_name:'6 Months', start_date: daysFromToday(-96), end_date: daysFromToday(12), days_left:12 },
+  pendingPayment:null,
+  streak:34, checkedToday:false,
+  badges:[{type:'streak30',earned_on:daysFromToday(-4)}],
+  weight:68.4, goal:'build_muscle', diet_pref:'veg', declared_level:'intermediate', height_cm:165,
+};
+const PROGRESS = Array.from({length:8},(_,i)=>({ date: daysFromToday((i-7)*7), weight_kg:(71.2-i*0.35).toFixed(1)*1, note: i===7?'Felt strong on squats':'' }));
+const PAYMENTS_MINE = [
+  { id:1, plan_name:'6 Months', amount:7000, method:'upi', status:'paid', paid_on: daysFromToday(-96) },
+  { id:2, plan_name:'1 Month', amount:1500, method:'cash', status:'paid', paid_on: daysFromToday(-210) },
+];
+const RECOMMEND = {
+  assessment:{ score:71, level:'intermediate', factors:[
+    { label:'Attendance, last 30 days', value:32, max:40 },
+    { label:'Time training with us', value:18, max:25 },
+    { label:'Current streak', value:15, max:15 },
+    { label:'Experience you reported', value:10, max:20 },
+  ]},
+  goal:'build_muscle', weight:68.4, bmi:25.1, trend:-2.8, ai:true,
+  coach:{ summary:'Solid consistency and a growing streak. Push weight on your lower-body lifts and keep protein steady on rest days.',
+    tips:['Add 2.5kg to squat and RDL next week if form stays clean','Have a protein source within an hour after training','Keep one full rest day between heavy lower sessions'] },
+  workout:{ days:[
+    { day:'Day 1', focus:'Upper A', ex:['Barbell bench press 4x8','Bent-over row 4x8','Overhead press 3x10','Biceps curl + triceps pushdown 3x12','Stretch major muscles used today, 5 min'] },
+    { day:'Day 2', focus:'Lower A', ex:['Back squat 4x8','Romanian deadlift 3x10','Walking lunges 3x12','Calf raise 4x15','Stretch major muscles used today, 5 min'] },
+    { day:'Day 3', focus:'Upper B', ex:['Incline dumbbell press 4x10','Pull-ups / assisted 4x8','Lateral raise 3x15','Face pull 3x15','Stretch major muscles used today, 5 min'] },
+    { day:'Day 4', focus:'Lower B', ex:['Deadlift 4x5','Leg press 3x12','Hamstring curl 3x12','Hanging knee raise 3x12','Stretch major muscles used today, 5 min'] },
+  ]},
+  diet:{ kcal:2380, protein:137, carbs:268, fat:66, water_l:2.4, meals:[
+    { name:'Breakfast', kcal:595, food:'Moong dal chilla or vegetable poha with curd' },
+    { name:'Lunch', kcal:714, food:'2 rotis, dal, seasonal sabzi, salad, chaas' },
+    { name:'Snack', kcal:357, food:'Roasted chana with a fruit, or paneer sandwich' },
+    { name:'Dinner', kcal:714, food:'Paneer bhurji or tofu stir-fry with sauteed vegetables and 1 roti' },
+  ]},
+};
+
+const DASH = {
+  kpi:{ revMonth:186000, revTotal:1542000, active:118, members:142, today:37, expiring:6, pending:9000 },
+  revenue:[['Apr',124000],['May',141000],['Jun',132000],['Jul',158000],['Aug',171000],['Sep',186000]].map(([label,value])=>({label,value})),
+  attendance:[['Sun',18],['Mon',44],['Tue',39],['Wed',41],['Thu',37],['Fri',46],['Sat',29]].map(([label,value])=>({label,value})),
+  plans:[{name:'1 Month',c:22},{name:'3 Months',c:38},{name:'6 Months',c:41},{name:'12 Months',c:17}],
+  expiring:[
+    { id:1, name:'Aisha Khan', phone:'98765 43210', end_date:daysFromToday(12) },
+    { id:2, name:'Karan Mehta', phone:'91234 56780', end_date:daysFromToday(3) },
+    { id:3, name:'Sana Iqbal', phone:'99887 66554', end_date:daysFromToday(6) },
+    { id:4, name:'Vikram Rao', phone:'90909 12121', end_date:daysFromToday(1) },
+  ],
+};
+let MEMBERS = [
+  { id:1, name:'Aisha Khan', email:'aisha@example.com', phone:'98765 43210', trainer_id:1, trainer_name:'Rahul Verma', plan_name:'6 Months', end_date:daysFromToday(12), dues:0 },
+  { id:2, name:'Karan Mehta', email:'karan@example.com', phone:'91234 56780', trainer_id:null, trainer_name:null, plan_name:'3 Months', end_date:daysFromToday(3), dues:0 },
+  { id:3, name:'Sana Iqbal', email:'sana@example.com', phone:'99887 66554', trainer_id:2, trainer_name:'Priya Nair', plan_name:'1 Month', end_date:daysFromToday(6), dues:1 },
+  { id:4, name:'Vikram Rao', email:'vikram@example.com', phone:'90909 12121', trainer_id:1, trainer_name:'Rahul Verma', plan_name:'12 Months', end_date:daysFromToday(210), dues:0 },
+  { id:5, name:'Neha Sharma', email:'neha@example.com', phone:'93330 44556', trainer_id:null, trainer_name:null, plan_name:null, end_date:null, dues:0 },
+];
+let TRAINERS = [
+  { id:1, name:'Rahul Verma', email:'rahul@flexflow.local', phone:'99001 22334', specialization:'Strength & conditioning', clients:2 },
+  { id:2, name:'Priya Nair', email:'priya@flexflow.local', phone:'99002 33445', specialization:'Weight loss', clients:1 },
+];
+let PAYMENTS_ADMIN = [
+  { id:1, name:'Aisha Khan', plan_name:'6 Months', amount:7000, method:'upi', status:'paid', paid_on:daysFromToday(-96), created_at:daysFromToday(-96) },
+  { id:2, name:'Karan Mehta', plan_name:'3 Months', amount:4000, method:'card', status:'paid', paid_on:daysFromToday(-40), created_at:daysFromToday(-40) },
+  { id:3, name:'Sana Iqbal', plan_name:'1 Month', amount:1500, method:null, status:'pending', paid_on:null, created_at:daysFromToday(-2) },
+  { id:4, name:'Vikram Rao', plan_name:'12 Months', amount:12000, method:'netbanking', status:'paid', paid_on:daysFromToday(-150), created_at:daysFromToday(-150) },
+];
+let ATTEND = {
+  [iso(today)]: [
+    { id:1, name:'Aisha Khan', checked_in_at: new Date(today.getFullYear(),today.getMonth(),today.getDate(),6,42) },
+    { id:2, name:'Vikram Rao', checked_in_at: new Date(today.getFullYear(),today.getMonth(),today.getDate(),7,10) },
+    { id:3, name:'Karan Mehta', checked_in_at: new Date(today.getFullYear(),today.getMonth(),today.getDate(),18,5) },
+  ],
+};
+const TRAINER_CLIENTS = [
+  { id:1, name:'Aisha Khan', goal:'build_muscle', att30:24, weight:68.4, end_date:daysFromToday(12) },
+  { id:4, name:'Vikram Rao', goal:'stay_fit', att30:19, weight:82.1, end_date:daysFromToday(210) },
+];
+const TRAINER_PROGRESS = { 1: PROGRESS, 4: Array.from({length:5},(_,i)=>({date:daysFromToday((i-4)*10),weight_kg:(84-i*0.4).toFixed(1)*1,note:''})) };
+
+/* ============ shared helpers (same look as the live app) ============ */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const inr = n => '₹' + Number(n||0).toLocaleString('en-IN');
+const fmt = d => d ? new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '-';
+const S = { role:null, view:null, charts:[] };
+const F = {};
+function toast(msg,kind='ok'){ const el=document.createElement('div'); el.className=`pop pointer-events-auto max-w-md rounded-xl px-4 py-3 text-sm font-medium shadow-lg text-white ${kind==='bad'?'bg-bad':'bg-ink'}`; el.textContent=msg; $('#toast').appendChild(el); setTimeout(()=>el.remove(),3200); }
+const ICON = {
+  home:'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M9 22V12h6v10',
+  card:'M2 5h20v14H2z M2 10h20',
+  dumbbell:'M6.5 6.5v11 M17.5 6.5v11 M3 9v6 M21 9v6 M6.5 12h11',
+  coffee:'M18 8h1a4 4 0 0 1 0 8h-1 M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z M6 1v3 M10 1v3 M14 1v3',
+  trend:'M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6',
+  users:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  user:'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+  grid:'M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z',
+  cal:'M3 4h18v18H3z M16 2v4 M8 2v4 M3 10h18',
+  out:'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9',
+  trash:'M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6',
+  plus:'M12 5v14 M5 12h14',
+  flame:'M12 22c4 0 7-3 7-7 0-3-2-5-3-7-1 2-2 3-3 3 0-4-2-7-4-9 0 4-4 6-4 12 0 4 3 8 7 8z',
+  check:'M20 6L9 17l-5-5',
+  swap:'M17 1l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3',
+};
+const ic = (n,c='w-5 h-5') => `<svg class="${c} shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n].split(' M').map((d,i)=>`<path d="${i?'M':''}${d}"/>`).join('')}</svg>`;
+const card='bg-white rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,27,51,.04)]';
+const inp='w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand';
+const btn='inline-flex items-center justify-center gap-2 rounded-xl bg-brand hover:bg-brand-dark text-white font-semibold text-sm px-4 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const btn2='inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 font-semibold text-sm px-4 py-2.5 transition-colors';
+const field=(l,h)=>`<label class="block"><span class="block text-sm font-medium mb-1.5">${l}</span>${h}</label>`;
+const pill=(t,k)=>`<span class="inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${{ok:'bg-emerald-50 text-emerald-700',warn:'bg-amber-50 text-amber-700',bad:'bg-red-50 text-red-700',mute:'bg-slate-100 text-slate-600'}[k]}">${esc(t)}</span>`;
+const empty=(t,sub)=>`<div class="text-center py-12 px-4"><p class="font-semibold">${t}</p><p class="text-sm text-slate-500 mt-1">${sub||''}</p></div>`;
+const table=(heads,rows,none)=> rows.length ? `<div class="overflow-x-auto"><table class="w-full text-sm min-w-[560px]"><thead><tr class="text-left text-slate-500 border-b border-slate-200">${heads.map(h=>`<th class="font-medium px-4 py-3 whitespace-nowrap">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="border-b border-slate-100 last:border-0">${r.map(c=>`<td class="px-4 py-3 align-middle">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : none;
+const head=(t,sub,action='')=>`<div class="flex flex-wrap items-end justify-between gap-3 mb-6"><div><h1 class="font-display text-4xl font-bold tracking-tight">${t}</h1>${sub?`<p class="text-slate-500 mt-1">${sub}</p>`:''}</div>${action}</div>`;
+const alertBox=(kind,msg,label,on)=>`<div class="mb-6 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 ${kind==='bad'?'bg-red-50 text-red-900':'bg-amber-50 text-amber-900'}"><p class="text-sm font-medium">${msg}</p><button class="${btn}" onclick="${on}">${label}</button></div>`;
+function modal(html){ $('#modal').innerHTML = `<div class="fixed inset-0 z-50 grid place-items-end sm:place-items-center bg-ink/50 sm:p-4" onclick="if(event.target===this)F.close()"><div role="dialog" aria-modal="true" class="pop bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl p-6 max-h-[92vh] overflow-y-auto">${html}</div></div>`; const f=$('#modal input,#modal select'); if(f) f.focus(); }
+F.close = () => { $('#modal').innerHTML=''; };
+const ask=(msg,ok)=>{ window._ok=ok; modal(`<h2 class="font-display text-2xl font-bold">${msg}</h2><p class="text-sm text-slate-500 mt-1">Demo only — nothing is really deleted.</p><div class="flex gap-2 mt-6"><button class="${btn2} flex-1" onclick="F.close()">Keep</button><button class="${btn} !bg-bad flex-1" onclick="F.close();window._ok()">Delete</button></div>`); };
+const chartOf=(id,type,labels,data)=>{ if(!$('#'+id)) return; S.charts.push(new Chart($('#'+id),{ type, data:{ labels, datasets:[{ data, borderColor:'#2D5BFF', backgroundColor:type==='bar'?'#2D5BFF':'rgba(45,91,255,.12)', fill:type==='line', tension:.35, borderRadius:6, pointRadius:3, maxBarThickness:36 }] }, options:{ maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false}}, y:{beginAtZero:type==='bar', grid:{color:'#EEF1F5'}, ticks:{precision:0}} } } })); };
+
+/* ============ nav / shell ============ */
+const NAV = {
+  member:[['home','Home','home'],['plan','Plan & fees','card'],['workout','Workout','dumbbell'],['diet','Diet','coffee'],['progress','Progress','trend']],
+  admin:[['dash','Dashboard','grid'],['members','Members','users'],['trainers','Trainers','user'],['payments','Payments','card'],['attendance','Attendance','cal']],
+  trainer:[['clients','My members','users']],
+};
+const NAMES = { member:'Aisha Khan', admin:'Admin', trainer:'Rahul Verma' };
+F.switchRole = r => { S.role=r; S.view=null; roleShell(); };
+F.go = v => { S.view=v; roleShell(); };
+
+function roleShell(){
+  const nav = NAV[S.role];
+  S.view = nav.some(n=>n[0]===S.view) ? S.view : nav[0][0];
+  S.charts.forEach(c=>c.destroy()); S.charts=[];
+  const logo = '<span class="font-display text-2xl font-extrabold tracking-tight">FLEX<span class="text-brand">FLOW</span></span>';
+  const switcher = `<div class="relative">
+    <select onchange="F.switchRole(this.value)" class="appearance-none bg-white/10 hover:bg-white/15 text-white text-xs font-semibold rounded-lg pl-3 pr-7 py-2 cursor-pointer" aria-label="Switch demo role">
+      <option value="member" ${S.role==='member'?'selected':''}>Member view</option>
+      <option value="admin" ${S.role==='admin'?'selected':''}>Admin view</option>
+      <option value="trainer" ${S.role==='trainer'?'selected':''}>Trainer view</option>
+    </select></div>`;
+  $('#app').innerHTML = `<div class="min-h-screen lg:flex">
+    <aside class="hidden lg:flex w-64 shrink-0 flex-col bg-ink text-white p-5 sticky top-6 h-[calc(100vh-1.5rem)]">
+      <div class="mb-6 px-2">${logo.replace('text-2xl','text-3xl')}</div>
+      <div class="px-2 mb-6">${switcher}</div>
+      <nav class="space-y-1 flex-1">${nav.map(([k,l,i])=>`<button onclick="F.go('${k}')" class="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-left transition-colors ${k===S.view?'bg-brand text-white':'text-slate-300 hover:bg-white/10'}" ${k===S.view?'aria-current="page"':''}>${ic(i)}${l}</button>`).join('')}</nav>
+      <div class="border-t border-white/10 pt-4 px-2"><p class="text-sm font-semibold truncate">${esc(NAMES[S.role])}</p><p class="text-xs text-slate-400 capitalize">${S.role}</p></div>
+    </aside>
+    <div class="flex-1 min-w-0 pb-24 lg:pb-0">
+      <header class="lg:hidden flex items-center justify-between bg-ink text-white px-4 py-3 sticky top-6 z-30">${logo}${switcher}</header>
+      <main id="main" class="max-w-6xl mx-auto p-4 sm:p-6 lg:p-10"></main>
+    </div>
+    <nav class="bottom lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 flex justify-around">${nav.map(([k,l,i])=>`<button onclick="F.go('${k}')" class="flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${k===S.view?'text-brand':'text-slate-500'}">${ic(i)}${l.split(' ')[0]}</button>`).join('')}</nav>
+  </div>`;
+  V[S.view]();
+  scrollTo(0,0);
+}
+
+/* ============ landing / picker ============ */
+function landing(){
+  $('#app').innerHTML = `<div class="min-h-screen flex flex-col">
+    <section class="bg-ink text-white px-6 py-10 flex-1 flex flex-col justify-center items-start">
+      <span class="font-display text-2xl font-extrabold tracking-tight">FLEX<span class="text-brand">FLOW</span></span>
+      <h1 class="font-display font-extrabold leading-[.88] text-[56px] sm:text-[80px] tracking-tight mt-6">Show up.<br>Streak.<br><span class="text-brand">Level up.</span></h1>
+      <p class="mt-5 max-w-sm text-slate-300 text-sm">This is a click-through demo with sample data — pick a portal to explore. Nothing you do here is saved.</p>
+    </section>
+    <section class="px-6 py-8 bg-chalk space-y-3">
+      ${[['member','Member portal','Registration, plan & fees, AI workout and diet, streaks','home'],
+         ['admin','Admin portal','Dashboard, members, trainers, payments, attendance','grid'],
+         ['trainer','Trainer portal','Assigned members and their progress','users']]
+      .map(([k,t,sub,i])=>`<button onclick="F.switchRole('${k}')" class="${card} w-full flex items-center gap-4 p-4 text-left">
+        <span class="w-11 h-11 rounded-xl bg-brand-soft text-brand grid place-items-center">${ic(i)}</span>
+        <span class="flex-1"><span class="block font-semibold">${t}</span><span class="block text-xs text-slate-500 mt-0.5">${sub}</span></span>
+        <span class="text-slate-400">${ic('swap','w-4 h-4')}</span></button>`).join('')}
+    </section></div>`;
+}
+
+/* ============ member views ============ */
+const V = {};
+const medal=(n,on,label)=>`<div class="flex items-center gap-3 ${on?'':'opacity-60'}"><span class="medal ${on?'':'off'} w-14 h-14 rounded-full grid place-items-center"><span class="w-11 h-11 rounded-full bg-white/90 grid place-items-center font-display text-xl font-extrabold">${n}</span></span><div><p class="font-semibold text-sm">${label}</p><p class="text-xs text-slate-500">${on?'Earned':'Locked'}</p></div></div>`;
+
+V.home = () => {
+  const m=MEMBER, ms=m.membership, dl=ms.days_left;
+  const next = m.streak<30?30:90, pct=Math.min(100,Math.round(m.streak/next*100));
+  const has = t => m.badges.some(b=>b.type===t);
+  const banner = dl<=7 ? alertBox('warn',`Your membership ends in ${dl} days (${fmt(ms.end_date)}). Renew now to protect your streak.`,'Renew',"F.go('plan')") : '';
+  $('#main').innerHTML = `${head(`Hi, ${esc(m.name.split(' ')[0])}`, `Your trainer is ${esc(m.trainer)}`)}${banner}
+  <div class="grid lg:grid-cols-3 gap-5">
+    <div class="${card} p-6 lg:col-span-2"><div class="flex items-start justify-between gap-4">
+      <div><p class="text-sm text-slate-500">Current streak</p><p class="streak-num font-display text-[88px] leading-none font-extrabold flex items-center gap-2">${m.streak}<span class="text-gold">${ic('flame','w-10 h-10')}</span></p><p class="text-slate-500 text-sm mt-1">days in a row</p></div>
+      <button class="${btn} py-3 px-5" onclick="F.checkin()" ${m.checkedToday?'disabled':''}>${ic('check','w-4 h-4')}${m.checkedToday?'Checked in today':'Check in'}</button></div>
+      <div class="mt-6"><div class="flex justify-between text-xs text-slate-500 mb-1.5"><span>Next badge at ${next} days</span><span>${next-m.streak} to go</span></div>
+      <div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full bg-gold" style="width:${pct}%"></div></div></div>
+      <div class="flex flex-wrap gap-6 mt-7">${medal(30,has('streak30'),'30-day streak')}${medal(90,has('streak90'),'90-day streak')}</div></div>
+    <div class="${card} p-6"><p class="text-sm text-slate-500">Membership</p>
+      <p class="font-display text-3xl font-bold mt-1">${esc(ms.plan_name)}</p><p class="mt-1 text-sm"><span class="font-semibold">${dl}</span> days left</p>
+      <dl class="mt-5 text-sm space-y-2"><div class="flex justify-between"><dt class="text-slate-500">Started</dt><dd>${fmt(ms.start_date)}</dd></div><div class="flex justify-between"><dt class="text-slate-500">Ends</dt><dd>${fmt(ms.end_date)}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Fees</dt><dd>${pill('Paid','ok')}</dd></div></dl>
+      <button class="${btn2} w-full mt-5" onclick="F.go('plan')">Renew or change plan</button></div></div>`;
+};
+F.checkin = () => { MEMBER.checkedToday=true; MEMBER.streak++; toast(`Checked in. Streak: ${MEMBER.streak} days.`); V.home(); };
+
+V.plan = () => {
+  const base = PLANS[0].price/PLANS[0].months;
+  $('#main').innerHTML = `${head('Plan & fees', `${MEMBER.membership.plan_name}, valid until ${fmt(MEMBER.membership.end_date)}`)}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">${PLANS.map(p=>`<div class="${card} p-5 flex flex-col"><p class="font-semibold">${p.name}</p><p class="font-display text-4xl font-bold mt-1">${inr(p.price)}</p>
+    <p class="text-xs text-slate-500 mt-1">${inr(Math.round(p.price/p.months))} a month${p.months>1?`, ${Math.round((1-p.price/p.months/base)*100)}% off`:''}</p>
+    <button class="${btn} mt-5" onclick="F.buy('${p.name}',${p.price})">Renew</button></div>`).join('')}</div>
+  <h2 class="font-display text-2xl font-bold mt-10 mb-3">Payment history</h2>
+  <div class="${card}">${table(['Date','Plan','Amount','Method','Status'], PAYMENTS_MINE.map(p=>[fmt(p.paid_on),esc(p.plan_name),inr(p.amount),p.method.toUpperCase(),pill('Paid','ok')]))}</div>`;
+};
+const methodPicker = `<fieldset class="mt-5"><legend class="text-sm font-medium mb-2">Pay with</legend><div class="grid grid-cols-3 gap-2">${[['upi','UPI'],['card','Card'],['netbanking','Net banking']].map(([k,l],i)=>`<label class="cursor-pointer"><input type="radio" name="method" value="${k}" class="peer sr-only" ${i?'':'checked'}><div class="text-center rounded-xl border border-slate-300 py-2.5 text-sm font-medium peer-checked:border-brand peer-checked:bg-brand-soft">${l}</div></label>`).join('')}</div></fieldset>`;
+F.buy = (name,price) => modal(`<h2 class="font-display text-3xl font-bold">${name}</h2><p class="text-slate-500 text-sm">${inr(price)}. Demo checkout — no real payment is made.</p><form onsubmit="event.preventDefault();F.close();toast('Payment received. Membership updated.');">${methodPicker}<button class="${btn} w-full py-3 mt-6">Pay ${inr(price)}</button></form>`);
+
+V.workout = () => {
+  const r=RECOMMEND, a=r.assessment, LEVELS=['beginner','intermediate','advanced'], li=LEVELS.indexOf(a.level);
+  $('#main').innerHTML = `${head('Your workout', `${GOAL[r.goal]} plan, updated from your last 30 days`)}
+  <div class="${card} p-6 mb-5"><div class="flex flex-wrap items-center justify-between gap-4"><div><p class="text-sm text-slate-500">Your level right now</p><p class="font-display text-5xl font-bold capitalize">${a.level}</p></div><div class="text-right"><p class="font-display text-5xl font-bold streak-num">${a.score}<span class="text-xl text-slate-400">/100</span></p><p class="text-sm text-slate-500">readiness score</p></div></div>
+    <div class="grid grid-cols-3 gap-1.5 mt-5">${LEVELS.map((l,i)=>`<div class="h-2 rounded-full ${i<=li?'bg-brand':'bg-slate-200'}"></div>`).join('')}</div>
+    <div class="mt-6 grid sm:grid-cols-2 gap-x-8 gap-y-3">${a.factors.map(f=>`<div><div class="flex justify-between text-xs text-slate-500 mb-1"><span>${f.label}</span><span>${f.value}/${f.max}</span></div><div class="h-1.5 rounded-full bg-slate-100"><div class="h-full rounded-full bg-brand/70" style="width:${f.value/f.max*100}%"></div></div></div>`).join('')}</div></div>
+  <div class="rounded-2xl bg-brand-soft p-5 mb-5"><p class="font-semibold text-sm text-brand-dark mb-1">AI coach note</p><p class="text-sm">${esc(r.coach.summary)}</p><ul class="mt-3 text-sm space-y-1 list-disc pl-5">${r.coach.tips.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>
+  <div class="grid md:grid-cols-2 xl:grid-cols-4 gap-4">${r.workout.days.map(d=>`<div class="${card} p-5"><p class="text-xs text-slate-500">${d.day}</p><p class="font-display text-2xl font-bold mb-3">${d.focus}</p><ul class="space-y-2 text-sm">${d.ex.map(e=>`<li class="flex gap-2">${ic('check','w-4 h-4 mt-0.5 text-ok')}${esc(e)}</li>`).join('')}</ul></div>`).join('')}</div>
+  <p class="text-xs text-slate-500 mt-5">Train these days with a rest day between sessions. Your level moves up as your attendance and streak grow.</p>`;
+};
+V.diet = () => {
+  const r=RECOMMEND, d=r.diet;
+  $('#main').innerHTML = `${head('Your diet', `Built for ${GOAL[r.goal].toLowerCase()} at ${r.weight} kg · BMI ${r.bmi}`)}
+  <div class="rounded-2xl bg-brand-soft p-5 mb-5"><p class="font-semibold text-sm text-brand-dark mb-1">AI coach note</p><p class="text-sm">${esc(r.coach.summary)}</p></div>
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">${[['Calories',d.kcal,'kcal a day'],['Protein',d.protein,'g'],['Carbs',d.carbs,'g'],['Fat',d.fat,'g']].map(([l,v,u])=>`<div class="${card} p-5"><p class="text-sm text-slate-500">${l}</p><p class="font-display text-4xl font-bold streak-num">${v}</p><p class="text-xs text-slate-500">${u}</p></div>`).join('')}</div>
+  <div class="${card}"><ul class="divide-y divide-slate-100">${d.meals.map(m=>`<li class="p-5 flex flex-wrap gap-x-6 gap-y-1 items-baseline"><div class="w-28"><p class="font-semibold">${m.name}</p><p class="text-xs text-slate-500">about ${m.kcal} kcal</p></div><p class="flex-1 min-w-[220px] text-sm">${esc(m.food)}</p></li>`).join('')}</ul></div>
+  <p class="text-xs text-slate-500 mt-4">Aim for ${d.water_l} litres of water a day. These are general guidelines, not medical advice.</p>`;
+};
+V.progress = () => {
+  const rows=PROGRESS, diff=(rows.at(-1).weight_kg-rows[0].weight_kg).toFixed(1);
+  $('#main').innerHTML = `${head('Progress', `${diff>0?'+':''}${diff} kg since ${fmt(rows[0].date)}`)}
+  <div class="grid lg:grid-cols-3 gap-5"><div class="${card} p-5 lg:col-span-2"><div class="h-64"><canvas id="wc"></canvas></div></div>
+  <form onsubmit="event.preventDefault();toast('Weight saved (demo only)');" class="${card} p-5 space-y-4"><h2 class="font-display text-2xl font-bold">Log today</h2>${field('Weight (kg)', `<input class="${inp}" type="number" step="0.1" min="25" max="300" value="${rows.at(-1).weight_kg}">`)}${field('Note (optional)', `<input class="${inp}" maxlength="200" placeholder="Felt strong on squats">`)}<button class="${btn} w-full">Save weight</button></form></div>
+  <div class="${card} mt-5">${table(['Date','Weight','Note'],[...rows].reverse().map(r=>[fmt(r.date), r.weight_kg+' kg', esc(r.note||'')]))}</div>`;
+  chartOf('wc','line', rows.map(r=>fmt(r.date).slice(0,6)), rows.map(r=>r.weight_kg));
+};
+
+/* ============ admin views ============ */
+V.dash = () => {
+  const d=DASH, k=d.kpi;
+  const kpi=(l,v,sub,cls='')=>`<div class="${card} p-5"><p class="text-sm text-slate-500">${l}</p><p class="font-display text-4xl font-bold streak-num ${cls}">${v}</p><p class="text-xs text-slate-500">${sub}</p></div>`;
+  $('#main').innerHTML = `${head('Dashboard','Revenue, members and attendance at a glance')}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">${kpi('Revenue this month',inr(k.revMonth),`${inr(k.revTotal)} all time`)}${kpi('Active members',k.active,`${k.members} registered`)}${kpi("Today's check-ins",k.today,'members in the gym today')}${kpi('Expiring in 7 days',k.expiring,`${inr(k.pending)} in unpaid fees`,'text-gold')}</div>
+  <div class="grid lg:grid-cols-2 gap-5 mt-5"><div class="${card} p-5"><h2 class="font-semibold mb-3">Revenue, last 6 months</h2><div class="h-56"><canvas id="rv"></canvas></div></div>
+  <div class="${card} p-5"><h2 class="font-semibold mb-3">Check-ins, last 7 days</h2><div class="h-56"><canvas id="at"></canvas></div></div></div>
+  <div class="grid lg:grid-cols-3 gap-5 mt-5"><div class="${card} lg:col-span-2"><h2 class="font-semibold p-5 pb-0">Memberships expiring soon</h2>
+  ${table(['Member','Phone','Ends',''], d.expiring.map(e=>[esc(e.name),esc(e.phone),fmt(e.end_date),`<a class="text-brand font-semibold" href="tel:${esc(e.phone)}">Call</a>`]))}</div>
+  <div class="${card} p-5"><h2 class="font-semibold mb-3">Active plans</h2>${d.plans.map(p=>`<div class="flex justify-between py-2 border-b border-slate-100 last:border-0 text-sm"><span>${p.name}</span><span class="font-semibold">${p.c}</span></div>`).join('')}</div></div>`;
+  chartOf('rv','bar', d.revenue.map(x=>x.label), d.revenue.map(x=>x.value));
+  chartOf('at','line', d.attendance.map(x=>x.label), d.attendance.map(x=>x.value));
+};
+
+V.members = () => {
+  $('#main').innerHTML = `${head('Members', `${MEMBERS.length} registered`, `<button class="${btn}" onclick="F.addMember()">${ic('plus','w-4 h-4')}Add member</button>`)}
+  <input id="ms" class="${inp} mb-4 max-w-sm" type="search" placeholder="Search by name, email or phone" oninput="F.filter()" aria-label="Search members"><div id="mt" class="${card}"></div>`;
+  F.filter();
+};
+F.filter = () => {
+  const s=($('#ms')?.value||'').toLowerCase();
+  const rows = MEMBERS.filter(m=>[m.name,m.email,m.phone].join(' ').toLowerCase().includes(s));
+  const t = iso(today);
+  $('#mt').innerHTML = table(['Member','Plan','Ends','Fees','Trainer',''], rows.map(m=>[
+    `<p class="font-semibold">${esc(m.name)}</p><p class="text-xs text-slate-500">${esc(m.email)}</p>`, esc(m.plan_name||'-'),
+    m.end_date ? `${fmt(m.end_date)} ${m.end_date<t?pill('Expired','bad'):''}` : '-', m.dues?pill('Due','warn'):pill('Clear','ok'),
+    `<select class="${inp} !py-1.5 !w-36" onchange="F.assign(${m.id},this.value)" aria-label="Trainer for ${esc(m.name)}"><option value="">No trainer</option>${TRAINERS.map(t=>`<option value="${t.id}" ${t.id===m.trainer_id?'selected':''}>${esc(t.name)}</option>`).join('')}</select>`,
+    `<button class="text-bad p-2" onclick="F.delMember(${m.id},'${esc(m.name).replace(/'/g,'')}')" aria-label="Delete ${esc(m.name)}">${ic('trash','w-4 h-4')}</button>`]), empty('No members found','Try another search or add a member.'));
+};
+F.assign = (id,t) => { const m=MEMBERS.find(x=>x.id===id); m.trainer_id=t?Number(t):null; m.trainer_name=t?TRAINERS.find(x=>x.id==t).name:null; toast('Trainer updated'); };
+F.delMember = (id,name) => ask(`Delete ${name}?`, () => { MEMBERS=MEMBERS.filter(m=>m.id!==id); toast('Member deleted'); V.members(); });
+F.addMember = () => modal(`<h2 class="font-display text-3xl font-bold mb-4">Add member</h2><form onsubmit="F.saveMember(event);return false" class="space-y-3">
+    ${field('Full name', `<input class="${inp}" name="name" required>`)}${field('Email', `<input class="${inp}" type="email" name="email" required>`)}${field('Phone', `<input class="${inp}" type="tel" name="phone">`)}
+    ${field('Temporary password', `<input class="${inp}" name="password" minlength="8" required>`)}
+    ${field('Plan', `<select class="${inp}" name="plan_id">${PLANS.map(p=>`<option value="${p.id}">${p.name} · ${inr(p.price)}</option>`).join('')}</select>`)}
+    ${field('Payment received', `<select class="${inp}" name="method"><option value="cash">Yes, cash</option><option value="upi">Yes, UPI</option><option value="">Not yet</option></select>`)}
+    <div class="flex gap-2 pt-2"><button type="button" class="${btn2} flex-1" onclick="F.close()">Cancel</button><button class="${btn} flex-1">Add member</button></div></form>`);
+F.saveMember = e => { e.preventDefault(); const d=Object.fromEntries(new FormData(e.target)); const plan=PLANS.find(p=>p.id==d.plan_id);
+  MEMBERS.push({ id:Date.now(), name:d.name, email:d.email, phone:d.phone||'-', trainer_id:null, trainer_name:null, plan_name:d.method?plan.name:null, end_date:d.method?daysFromToday(plan.months*30):null, dues:d.method?0:1 });
+  F.close(); toast('Member added'); V.members(); };
+
+V.trainers = () => {
+  $('#main').innerHTML = `${head('Trainers', `${TRAINERS.length} on staff`, `<button class="${btn}" onclick="F.addTrainer()">${ic('plus','w-4 h-4')}Add trainer</button>`)}
+  <div class="${card}">${table(['Trainer','Speciality','Members',''], TRAINERS.map(t=>[`<p class="font-semibold">${esc(t.name)}</p><p class="text-xs text-slate-500">${esc(t.email)}</p>`, esc(t.specialization||'-'), t.clients, `<button class="text-bad p-2" onclick="F.delTrainer(${t.id},'${esc(t.name).replace(/'/g,'')}')" aria-label="Delete ${esc(t.name)}">${ic('trash','w-4 h-4')}</button>`]), empty('No trainers yet','Add your first trainer.'))}</div>`;
+};
+F.addTrainer = () => modal(`<h2 class="font-display text-3xl font-bold mb-4">Add trainer</h2><form onsubmit="F.saveTrainer(event);return false" class="space-y-3">
+  ${field('Full name', `<input class="${inp}" name="name" required>`)}${field('Email', `<input class="${inp}" type="email" name="email" required>`)}${field('Phone', `<input class="${inp}" type="tel" name="phone">`)}
+  ${field('Speciality', `<input class="${inp}" name="specialization" placeholder="Strength, weight loss…">`)}${field('Temporary password', `<input class="${inp}" name="password" minlength="8" required>`)}
+  <div class="flex gap-2 pt-2"><button type="button" class="${btn2} flex-1" onclick="F.close()">Cancel</button><button class="${btn} flex-1">Add trainer</button></div></form>`);
+F.saveTrainer = e => { e.preventDefault(); const d=Object.fromEntries(new FormData(e.target)); TRAINERS.push({ id:Date.now(), name:d.name, email:d.email, phone:d.phone||'-', specialization:d.specialization||'-', clients:0 }); F.close(); toast('Trainer added'); V.trainers(); };
+F.delTrainer = (id,name) => ask(`Delete ${name}?`, () => { TRAINERS=TRAINERS.filter(t=>t.id!==id); toast('Trainer deleted'); V.trainers(); });
+
+V.payments = () => {
+  $('#main').innerHTML = `${head('Payments','Record fees and settle pending dues', `<button class="${btn}" onclick="F.addPayment()">${ic('plus','w-4 h-4')}Record payment</button>`)}
+  <div class="${card}">${table(['Date','Member','Plan','Amount','Method','Status'], PAYMENTS_ADMIN.map(p=>[fmt(p.paid_on||p.created_at), esc(p.name), esc(p.plan_name), inr(p.amount), p.method?p.method.toUpperCase():'-',
+    p.status==='paid'?pill('Paid','ok'):`<button class="${btn2} !py-1 !px-3" onclick="F.settle(${p.id})">Mark paid</button>`]))}</div>`;
+};
+F.settle = id => modal(`<h2 class="font-display text-3xl font-bold">Mark as paid</h2><form onsubmit="event.preventDefault();F.doSettle(${id},this)" class="space-y-4 mt-4">${field('Received via', `<select class="${inp}" name="method"><option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option></select>`)}<button class="${btn} w-full">Confirm payment</button></form>`);
+F.doSettle = (id,form) => { const m=new FormData(form).get('method'); const p=PAYMENTS_ADMIN.find(x=>x.id===id); p.status='paid'; p.method=m; p.paid_on=iso(today); F.close(); toast('Payment recorded'); V.payments(); };
+F.addPayment = () => modal(`<h2 class="font-display text-3xl font-bold mb-4">Record payment</h2><form onsubmit="F.savePayment(event);return false" class="space-y-3">
+    ${field('Member', `<select class="${inp}" name="member_id">${MEMBERS.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>`)}
+    ${field('Plan', `<select class="${inp}" name="plan_id">${PLANS.map(p=>`<option value="${p.id}">${p.name} · ${inr(p.price)}</option>`).join('')}</select>`)}
+    ${field('Received via', `<select class="${inp}" name="method"><option value="cash">Cash</option><option value="upi">UPI</option></select>`)}
+    <div class="flex gap-2 pt-2"><button type="button" class="${btn2} flex-1" onclick="F.close()">Cancel</button><button class="${btn} flex-1">Save payment</button></div></form>`);
+F.savePayment = e => { e.preventDefault(); const d=Object.fromEntries(new FormData(e.target)); const mem=MEMBERS.find(m=>m.id==d.member_id); const plan=PLANS.find(p=>p.id==d.plan_id);
+  PAYMENTS_ADMIN.unshift({ id:Date.now(), name:mem.name, plan_name:plan.name, amount:plan.price, method:d.method, status:'paid', paid_on:iso(today) }); F.close(); toast('Payment recorded'); V.payments(); };
+
+V.attendance = () => {
+  const day = $('#ad')?.value || iso(today);
+  const rows = ATTEND[day] || [];
+  $('#main').innerHTML = `${head('Attendance', `${rows.length} check-in${rows.length===1?'':'s'} on ${fmt(day)}`)}
+  <div class="flex flex-wrap gap-3 mb-4"><input id="ad" type="date" class="${inp} !w-44" value="${day}" onchange="V.attendance()" aria-label="Date">
+  <form class="flex gap-2 flex-1 min-w-[260px]" onsubmit="F.mark(event);return false"><select name="member_id" class="${inp}" required aria-label="Member"><option value="">Check in a member…</option>${MEMBERS.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select><button class="${btn}">Check in</button></form></div>
+  <div class="${card}">${table(['Member','Time'], rows.map(r=>[esc(r.name), r.checked_in_at.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})]), empty('No check-ins on this day','Members can check in from their app, or you can check them in above.'))}</div>`;
+};
+F.mark = e => { e.preventDefault(); const id=new FormData(e.target).get('member_id'); const mem=MEMBERS.find(m=>m.id==id); const day=iso(today);
+  ATTEND[day]=ATTEND[day]||[]; ATTEND[day].push({ id:Date.now(), name:mem.name, checked_in_at:new Date() }); toast('Checked in'); V.attendance(); };
+
+/* ============ trainer views ============ */
+V.clients = () => {
+  const t = iso(today);
+  $('#main').innerHTML = `${head('My members', `${TRAINER_CLIENTS.length} assigned to you`)}<div class="${card}">${table(['Member','Goal','Sessions (30 days)','Weight','Membership',''], TRAINER_CLIENTS.map(m=>[`<span class="font-semibold">${esc(m.name)}</span>`, GOAL[m.goal], m.att30, m.weight+' kg', m.end_date<t?pill('Expired','bad'):pill('Active until '+fmt(m.end_date),'ok'), `<button class="${btn2} !py-1 !px-3" onclick="F.viewP(${m.id},'${esc(m.name).replace(/'/g,'')}')">Progress</button>`]))}</div>`;
+};
+F.viewP = (id,name) => { const rows=TRAINER_PROGRESS[id]||[];
+  modal(`<h2 class="font-display text-3xl font-bold mb-3">${name}</h2>${rows.length?`<ul class="text-sm divide-y divide-slate-100">${[...rows].reverse().map(r=>`<li class="py-2 flex justify-between gap-3"><span>${fmt(r.date)}</span><span class="text-slate-500 flex-1 truncate">${esc(r.note||'')}</span><span class="font-semibold">${r.weight_kg} kg</span></li>`).join('')}</ul>`:'<p class="text-sm text-slate-500">No weight entries yet.</p>'}<button class="${btn2} w-full mt-5" onclick="F.close()">Close</button>`); };
+
+window.F=F; window.V=V;
+landing();
+</script>
+</body>
+</html>

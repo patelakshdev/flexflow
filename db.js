@@ -37,7 +37,7 @@ if (isPg) {
     ssl: isRemote ? { rejectUnauthorized: false } : false,
     max: 10,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000,
   });
 
   pool.on('error', (err) => {
@@ -176,10 +176,13 @@ async function getConnection() {
 }
 
 let isInitialized = false;
+let initPromise = null;
+
 async function ensureDbInit() {
   if (isInitialized) return;
-
-  try {
+  if (!initPromise) {
+    initPromise = (async () => {
+      try {
     if (isPg) {
       // 1. Users Table
       await pool.query(`CREATE TABLE IF NOT EXISTS users (
@@ -406,9 +409,14 @@ async function ensureDbInit() {
     }
 
     isInitialized = true;
-  } catch (err) {
-    console.error('Database initialization notice:', err.message);
+      } catch (err) {
+        console.error('Database initialization notice:', err.message);
+      } finally {
+        initPromise = null;
+      }
+    })();
   }
+  return initPromise;
 }
 
 module.exports = {

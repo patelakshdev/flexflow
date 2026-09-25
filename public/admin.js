@@ -48,6 +48,14 @@ if (S.token && !S.user) {
 const F = {};
 const act = fn => async (...a) => { try { await fn(...a); } catch(e) { toast(e.message, 'bad'); } };
 
+// Clean query string if polluted by native GET form submit
+if (typeof window !== 'undefined' && window.location.search && (window.location.search.includes('email=') || window.location.search.includes('password='))) {
+  window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('submit', e => { e.preventDefault(); }, false);
+}
+
 /* ─── API ─── */
 async function api(p, o = {}) {
   let r;
@@ -315,10 +323,10 @@ async function loginScreen() {
         <div class="bg-white rounded-2xl p-8 shadow-2xl slide-up">
           <h2 class="font-display text-3xl font-extrabold mb-1">Admin Login</h2>
           <p class="text-slate-500 text-sm mb-6">Sign in with your admin credentials</p>
-          <form onsubmit="F.login(event);return false" class="space-y-4">
+          <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.login(event);return false" class="space-y-4">
             ${field('Email', `<input class="${INP}" type="email" name="email" autocomplete="username" placeholder="admin@flexflow.com" required>`)}
             ${field('Password', `<input class="${INP}" type="password" name="password" autocomplete="current-password" placeholder="••••••••" required>`)}
-            <button class="${BTN} w-full py-3">Sign in to Admin →</button>
+            <button type="submit" class="${BTN} w-full py-3">Sign in to Admin →</button>
           </form>
           <p class="text-xs text-slate-400 text-center mt-4"><a href="/" class="hover:text-brand">← Back to member portal</a></p>
         </div>
@@ -327,11 +335,14 @@ async function loginScreen() {
 }
 
 F.login = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button');
-  btn.disabled = true; btn.textContent = 'Signing in…';
+  if (e && e.preventDefault) e.preventDefault();
+  if (e && e.stopPropagation) e.stopPropagation();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
   try {
-    const r = await api('/auth/login', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
+    const creds = form ? Object.fromEntries(new FormData(form)) : {};
+    const r = await api('/auth/login', {method:'POST', body: creds});
     if (r.user.role === 'member') {
       localStorage.setItem('ff_t', r.token);
       localStorage.setItem('ff_u', JSON.stringify(r.user));
@@ -343,7 +354,7 @@ F.login = act(async e => {
     }
     if (r.user.role !== 'admin') throw new Error('This portal is for admins only.');
     start(r);
-  } finally { btn.disabled = false; btn.textContent = 'Sign in to Admin →'; }
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Sign in to Admin →'; } }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -503,7 +514,7 @@ F.addMember = async () => {
   const plans = await api('/plans');
   modal(`
     <h2 class="font-display text-3xl font-extrabold mb-5">Add Member</h2>
-    <form onsubmit="F.saveMember(event);return false" class="space-y-3">
+    <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.saveMember(event);return false" class="space-y-3">
       <div class="grid grid-cols-2 gap-3">
         <div class="col-span-2">${field('Full name', `<input class="${INP}" name="name" placeholder="John Doe" required>`)}</div>
         <div class="col-span-2">${field('Email', `<input class="${INP}" type="email" name="email" placeholder="john@example.com" required>`)}</div>
@@ -519,17 +530,20 @@ F.addMember = async () => {
       ${field('Payment received', `<select class="${INP}" name="method"><option value="cash">💵 Cash</option><option value="upi">📱 UPI</option><option value="card">💳 Card</option><option value="">Not yet (pending)</option></select>`)}
       <div class="flex gap-2 pt-2">
         <button type="button" class="${BTN2} flex-1" onclick="F.close()">Cancel</button>
-        <button class="${BTN} flex-1">Add Member</button>
+        <button type="submit" class="${BTN} flex-1">Add Member</button>
       </div>
     </form>`, {size:'sm:max-w-lg'});
 };
 
 F.saveMember = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button:last-of-type');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  await api('/admin/members', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
-  F.close(); toast('Member added successfully', 'ok'); V.members();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    await api('/admin/members', {method:'POST', body: Object.fromEntries(new FormData(form))});
+    F.close(); toast('Member added successfully', 'ok'); V.members();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Add Member'; } }
 });
 
 /* ─── TRAINERS ─── */
@@ -567,7 +581,7 @@ V.trainers = async () => {
 
 F.addTrainer = () => modal(`
   <h2 class="font-display text-3xl font-extrabold mb-5">Add Trainer</h2>
-  <form onsubmit="F.saveTrainer(event);return false" class="space-y-3">
+  <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.saveTrainer(event);return false" class="space-y-3">
     ${field('Full name', `<input class="${INP}" name="name" placeholder="Jane Smith" required>`)}
     ${field('Email', `<input class="${INP}" type="email" name="email" placeholder="jane@flexflow.com" required>`)}
     ${field('Phone', `<input class="${INP}" type="tel" name="phone" placeholder="+91 98765 43210">`)}
@@ -575,14 +589,19 @@ F.addTrainer = () => modal(`
     ${field('Password', `<input class="${INP}" type="password" name="password" minlength="8" placeholder="8+ characters" required>`)}
     <div class="flex gap-2 pt-2">
       <button type="button" class="${BTN2} flex-1" onclick="F.close()">Cancel</button>
-      <button class="${BTN} flex-1">Add Trainer</button>
+      <button type="submit" class="${BTN} flex-1">Add Trainer</button>
     </div>
   </form>`);
 
 F.saveTrainer = act(async e => {
-  e.preventDefault();
-  await api('/admin/trainers', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
-  F.close(); toast('Trainer added', 'ok'); V.trainers();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    await api('/admin/trainers', {method:'POST', body: Object.fromEntries(new FormData(form))});
+    F.close(); toast('Trainer added', 'ok'); V.trainers();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Add Trainer'; } }
 });
 
 F.delTrainer = (id, name) => ask(`Remove ${name}?`, 'Their members will be unassigned.', act(async () => {
@@ -638,7 +657,7 @@ F.filterPayments = () => {
 F.settle = id => modal(`
   <h2 class="font-display text-2xl font-extrabold mb-1">Mark as Paid</h2>
   <p class="text-slate-500 text-sm mb-5">Select the payment method received</p>
-  <form onsubmit="F.doSettle(event,${id});return false" class="space-y-4">
+  <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.doSettle(event,${id});return false" class="space-y-4">
     ${field('Received via', `<select class="${INP}" name="method">
       <option value="cash">💵 Cash</option>
       <option value="upi">📱 UPI</option>
@@ -647,13 +666,14 @@ F.settle = id => modal(`
     </select>`)}
     <div class="flex gap-2">
       <button type="button" class="${BTN2} flex-1" onclick="F.close()">Cancel</button>
-      <button class="${BTN} flex-1">Confirm Payment</button>
+      <button type="submit" class="${BTN} flex-1">Confirm Payment</button>
     </div>
   </form>`);
 
 F.doSettle = act(async (e, id) => {
-  e.preventDefault();
-  await api(`/admin/payments/${id}/settle`, {method:'POST', body: Object.fromEntries(new FormData(e.target))});
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  await api(`/admin/payments/${id}/settle`, {method:'POST', body: Object.fromEntries(new FormData(form))});
   F.close(); toast('Payment confirmed', 'ok'); V.payments();
 });
 
@@ -661,20 +681,21 @@ F.addPayment = async () => {
   const [ms, plans] = await Promise.all([api('/admin/members'), api('/plans')]);
   modal(`
     <h2 class="font-display text-3xl font-extrabold mb-5">Record Payment</h2>
-    <form onsubmit="F.savePayment(event);return false" class="space-y-3">
+    <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.savePayment(event);return false" class="space-y-3">
       ${field('Member', `<select class="${INP}" name="member_id" required><option value="">Select member…</option>${ms.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}</select>`)}
       ${field('Plan', `<select class="${INP}" name="plan_id">${plans.map(p => `<option value="${p.id}">${esc(p.name)} · ${inr(p.price)}</option>`).join('')}</select>`)}
       ${field('Received via', `<select class="${INP}" name="method"><option value="cash">💵 Cash</option><option value="upi">📱 UPI</option><option value="card">💳 Card</option><option value="netbanking">🏦 Net Banking</option></select>`)}
       <div class="flex gap-2 pt-2">
         <button type="button" class="${BTN2} flex-1" onclick="F.close()">Cancel</button>
-        <button class="${BTN} flex-1">Save Payment</button>
+        <button type="submit" class="${BTN} flex-1">Save Payment</button>
       </div>
     </form>`);
 };
 
 F.savePayment = act(async e => {
-  e.preventDefault();
-  await api('/admin/payments', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  await api('/admin/payments', {method:'POST', body: Object.fromEntries(new FormData(form))});
   F.close(); toast('Payment recorded', 'ok'); V.payments();
 });
 
@@ -683,19 +704,20 @@ F.addPaymentFor = async (memberId, memberName) => {
   modal(`
     <h2 class="font-display text-2xl font-extrabold mb-1">Record Payment</h2>
     <p class="text-slate-500 text-sm mb-5">for <strong>${esc(memberName)}</strong></p>
-    <form onsubmit="F.savePaymentFor(event,${memberId});return false" class="space-y-3">
+    <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.savePaymentFor(event,${memberId});return false" class="space-y-3">
       ${field('Plan', `<select class="${INP}" name="plan_id">${plans.map(p => `<option value="${p.id}">${esc(p.name)} · ${inr(p.price)}</option>`).join('')}</select>`)}
       ${field('Received via', `<select class="${INP}" name="method"><option value="cash">💵 Cash</option><option value="upi">📱 UPI</option><option value="card">💳 Card</option></select>`)}
       <div class="flex gap-2">
         <button type="button" class="${BTN2} flex-1" onclick="F.close()">Cancel</button>
-        <button class="${BTN} flex-1">Confirm</button>
+        <button type="submit" class="${BTN} flex-1">Confirm</button>
       </div>
     </form>`);
 };
 
 F.savePaymentFor = act(async (e, memberId) => {
-  e.preventDefault();
-  const d = Object.fromEntries(new FormData(e.target));
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const d = Object.fromEntries(new FormData(form));
   await api('/admin/payments', {method:'POST', body: {member_id: memberId, plan_id: d.plan_id, method: d.method}});
   F.close(); toast('Payment recorded', 'ok');
   if (S.view === 'members') V.members();
@@ -789,14 +811,14 @@ V.attendance = async () => {
     <div class="${CARD} p-5 mb-6">
       <div class="flex flex-wrap gap-3 items-end">
         ${field('Date', `<input id="ad" type="date" class="${INP} !w-44" value="${day}" onchange="V.attendance()" aria-label="Date">`)}
-        <form class="flex gap-2 flex-1 min-w-[260px]" onsubmit="F.mark(event);return false">
+        <form action="javascript:void(0);" method="POST" class="flex gap-2 flex-1 min-w-[260px]" onsubmit="event.preventDefault();F.mark(event);return false">
           ${field('Manual check-in', `
             <div class="flex gap-2">
               <select name="member_id" class="${INP}" required aria-label="Member">
                 <option value="">Select member…</option>
                 ${ms.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('')}
               </select>
-              <button class="${BTN} shrink-0">Check In</button>
+              <button type="submit" class="${BTN} shrink-0">Check In</button>
             </div>`)}
         </form>
       </div>
@@ -820,12 +842,15 @@ V.attendance = async () => {
 };
 
 F.mark = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button');
-  btn.disabled = true; btn.textContent = '…';
-  const r = await api('/admin/attendance', {method:'POST', body: {member_id: new FormData(e.target).get('member_id')}});
-  toast(r.earned?.length ? '🎉 Checked in. A badge was just earned!' : `✓ Checked in. Streak: ${r.streak}`, 'ok');
-  await V.attendance();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const r = await api('/admin/attendance', {method:'POST', body: {member_id: new FormData(form).get('member_id')}});
+    toast(r.earned?.length ? '🎉 Checked in. A badge was just earned!' : `✓ Checked in. Streak: ${r.streak}`, 'ok');
+    await V.attendance();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Check In'; } }
 });
 
 /* ═══════════════════════════════════════════════════════════════

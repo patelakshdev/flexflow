@@ -50,6 +50,14 @@ if (S.token && !S.user) {
 const F = {}; // global function namespace
 const act = fn => async (...a) => { try { await fn(...a); } catch(e) { toast(e.message, 'bad'); } };
 
+// Clean query string if polluted by native GET form submit
+if (typeof window !== 'undefined' && window.location.search && (window.location.search.includes('email=') || window.location.search.includes('password='))) {
+  window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('submit', e => { e.preventDefault(); }, false);
+}
+
 /* ─── API ─── */
 async function api(p, o = {}) {
   let r;
@@ -419,10 +427,10 @@ function loginForm() {
     <div class="slide-up">
       <h2 class="font-display text-4xl font-extrabold mb-1">Welcome back</h2>
       <p class="text-slate-500 text-sm mb-8">Members and trainers sign in here</p>
-      <form onsubmit="F.login(event);return false" class="space-y-4">
+      <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.login(event);return false" class="space-y-4">
         ${field('Email address', `<input class="${INP}" type="email" name="email" autocomplete="username" placeholder="you@example.com" required>`)}
         ${field('Password', `<input class="${INP}" type="password" name="password" autocomplete="current-password" placeholder="••••••••" required>`)}
-        <button class="${BTN} w-full py-3 text-base">Sign in →</button>
+        <button type="submit" class="${BTN} w-full py-3 text-base">Sign in →</button>
         <div class="flex items-center justify-between text-xs text-slate-400 mt-3 pt-2">
           <span>Forgot password? Contact gym admin.</span>
           <a href="/admin" class="font-semibold text-brand hover:underline">Admin Portal →</a>
@@ -436,7 +444,7 @@ function registerForm(plans, base) {
     <div class="slide-up">
       <h2 class="font-display text-4xl font-extrabold mb-1">Join FlexFlow</h2>
       <p class="text-slate-500 text-sm mb-6">Create your member account</p>
-      <form onsubmit="F.register(event);return false" class="space-y-3">
+      <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.register(event);return false" class="space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div class="col-span-2">${field('Full name', `<input class="${INP}" name="name" placeholder="John Doe" required>`)}</div>
           <div class="col-span-2">${field('Email', `<input class="${INP}" type="email" name="email" autocomplete="username" placeholder="john@example.com" required>`)}</div>
@@ -464,29 +472,35 @@ function registerForm(plans, base) {
           </div>
         </fieldset>
 
-        <button class="${BTN} w-full py-3 text-base mt-2">Create account →</button>
+        <button type="submit" class="${BTN} w-full py-3 text-base mt-2">Create account →</button>
         <p class="text-xs text-center text-slate-400">Membership starts the day you pay.</p>
       </form>
     </div>`;
 }
 
 F.login = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button[type=submit],button:last-of-type');
-  btn.disabled = true; btn.textContent = 'Signing in…';
+  if (e && e.preventDefault) e.preventDefault();
+  if (e && e.stopPropagation) e.stopPropagation();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
   try {
-    start(await api('/auth/login', {method:'POST', body: Object.fromEntries(new FormData(e.target))}));
-  } finally { btn.disabled = false; btn.textContent = 'Sign in →'; }
+    const creds = form ? Object.fromEntries(new FormData(form)) : {};
+    start(await api('/auth/login', {method:'POST', body: creds}));
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Sign in →'; } }
 });
 
 F.register = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button[type=submit],button:last-of-type');
-  btn.disabled = true; btn.textContent = 'Creating account…';
+  if (e && e.preventDefault) e.preventDefault();
+  if (e && e.stopPropagation) e.stopPropagation();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating account…'; }
   try {
-    start(await api('/auth/register', {method:'POST', body: Object.fromEntries(new FormData(e.target))}));
+    const creds = form ? Object.fromEntries(new FormData(form)) : {};
+    start(await api('/auth/register', {method:'POST', body: creds}));
     toast('Welcome to FlexFlow! Pay your membership fee to start training.', 'ok');
-  } finally { btn.disabled = false; btn.textContent = 'Create account →'; }
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Create account →'; } }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -726,33 +740,39 @@ V.plan = async () => {
 F.buy = (id, name, price) => modal(`
   <h2 class="font-display text-3xl font-extrabold">${esc(name)}</h2>
   <p class="text-slate-500 text-sm mt-1 mb-5">Total: <span class="font-bold text-ink">${inr(price)}</span> · Starts the day you pay</p>
-  <form onsubmit="F.doBuy(event,${id});return false" class="space-y-4">
+  <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.doBuy(event,${id});return false" class="space-y-4">
     ${methodPicker()}
-    <button class="${BTN} w-full py-3 mt-2">Pay ${inr(price)} →</button>
+    <button type="submit" class="${BTN} w-full py-3 mt-2">Pay ${inr(price)} →</button>
   </form>`);
 
 F.doBuy = act(async (e, id) => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button:last-of-type');
-  btn.disabled = true; btn.textContent = 'Processing…';
-  await api('/me/renew', {method:'POST', body: {plan_id:id, method: new FormData(e.target).get('method')}});
-  F.close(); toast('✓ Payment received. Membership activated!', 'ok'); go();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+  try {
+    await api('/me/renew', {method:'POST', body: {plan_id:id, method: new FormData(form).get('method')}});
+    F.close(); toast('✓ Payment received. Membership activated!', 'ok'); go();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = `Pay ${inr(price)} →`; } }
 });
 
 F.pay = (id, amt) => modal(`
   <h2 class="font-display text-3xl font-extrabold">Pay ${inr(amt)}</h2>
   <p class="text-slate-500 text-sm mt-1 mb-5">Complete your pending payment</p>
-  <form onsubmit="F.doPay(event,${id});return false" class="space-y-4">
+  <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.doPay(event,${id});return false" class="space-y-4">
     ${methodPicker()}
-    <button class="${BTN} w-full py-3 mt-2">Pay now →</button>
+    <button type="submit" class="${BTN} w-full py-3 mt-2">Pay now →</button>
   </form>`);
 
 F.doPay = act(async (e, id) => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button:last-of-type');
-  btn.disabled = true; btn.textContent = 'Processing…';
-  await api('/me/pay', {method:'POST', body: {payment_id:id, method: new FormData(e.target).get('method')}});
-  F.close(); toast('✓ Payment confirmed. You are all set!', 'ok'); go();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+  try {
+    await api('/me/pay', {method:'POST', body: {payment_id:id, method: new FormData(form).get('method')}});
+    F.close(); toast('✓ Payment confirmed. You are all set!', 'ok'); go();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Pay now →'; } }
 });
 
 /* ─── AI Recommendation cache ─── */
@@ -915,11 +935,11 @@ V.progress = async () => {
       </div>
 
       <!-- Log form -->
-      <form onsubmit="F.logW(event);return false" class="${CARD} p-5 space-y-4">
+      <form action="javascript:void(0);" method="POST" onsubmit="event.preventDefault();F.logW(event);return false" class="${CARD} p-5 space-y-4">
         <h2 class="font-display text-2xl font-extrabold">Log Today</h2>
         ${field('Weight (kg)', `<input class="${INP}" type="number" name="weight_kg" step="0.1" min="25" max="300" placeholder="70.0" required>`, 'Enter your morning weight')}
         ${field('Note (optional)', `<input class="${INP}" name="note" maxlength="200" placeholder="Felt strong today…">`)}
-        <button class="${BTN} w-full">Save Entry</button>
+        <button type="submit" class="${BTN} w-full">Save Entry</button>
       </form>
     </div>
 
@@ -955,13 +975,16 @@ V.progress = async () => {
 };
 
 F.logW = act(async e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  await api('/me/progress', {method:'POST', body: Object.fromEntries(new FormData(e.target))});
-  toast('✓ Weight saved!', 'ok');
-  S.rec = null; // refresh recommendations
-  await V.progress();
+  if (e && e.preventDefault) e.preventDefault();
+  const form = e?.target?.tagName === 'FORM' ? e.target : (e?.target?.closest ? e.target.closest('form') : document.querySelector('form'));
+  const btn = form?.querySelector ? (form.querySelector('button[type=submit],button:last-of-type') || form.querySelector('button')) : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await api('/me/progress', {method:'POST', body: Object.fromEntries(new FormData(form))});
+    toast('✓ Weight saved!', 'ok');
+    S.rec = null; // refresh recommendations
+    await V.progress();
+  } finally { if (btn) { btn.disabled = false; btn.textContent = 'Save Entry'; } }
 });
 
 /* ═══════════════════════════════════════════════════════════════
